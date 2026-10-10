@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>校园知识问答系统</title>
+  <!-- 静态资源带版本号，避免浏览器缓存旧文件导致界面异常；改动前端后请递增 v -->
+  <link rel="stylesheet" href="css/style.css?v=5" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>校园知识问答</h1>
+        <p class="sub">GraphRAG · 学生手册与通知</p>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="chat">💬 智能问答</button>
+        <button class="nav-item" data-view="graph">🕸️ 知识图谱</button>
+        <button class="nav-item" data-view="quiz">📝 校规自测</button>
+        <button class="nav-item" data-view="compare">⚖️ 检索对比</button>
+        <button class="nav-item" data-view="about">ℹ️ 系统信息</button>
+      </nav>
+      <div class="disclaimer">本系统仅为信息查询辅助，请以学校官方发布文件为准。</div>
+    </aside>
+
+    <main class="main">
+      <section id="view-chat" class="view active"></section>
+      <section id="view-graph" class="view"></section>
+      <section id="view-quiz" class="view"></section>
+      <section id="view-compare" class="view"></section>
+      <section id="view-about" class="view"></section>
+    </main>
+  </div>
+  <script src="js/api.js?v=5"></script>
+  <script src="js/chat.js?v=5"></script>
+  <script src="js/graph.js?v=5"></script>
+  <script src="js/quiz.js?v=5"></script>
+  <script src="js/compare.js?v=5"></script>
+  <script src="js/about.js?v=5"></script>
+  <script src="js/main.js?v=5"></script>
+</body>
+</html>

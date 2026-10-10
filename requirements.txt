@@ -1,0 +1,29 @@
+# ============ Web 层（REST API / Swagger）============
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+
+# ============ 文档解析（导入知识库必需）============
+# 学生手册为 PDF、通知为 docx/doc；缺失会导致 import 阶段直接报错
+pypdf>=4.0
+python-docx>=1.1
+
+# ============ 检索 ============
+jieba>=0.42
+
+# ============ LLM / Embedding API（可选，默认关闭）============
+# 仅配置 API Key 后启用；不配置则走降级模式（原文摘编 / 哈希向量器）
+requests>=2.31
+
+# ============ 测试 ============
+pytest>=8.0
+httpx>=0.27
+
+# ============ 本地模型（可选，体积大，按需安装）============
+# 启用本地 BGE Embedding / Reranker 时执行（会连带安装 torch，约 2GB+）：
+#   pip install sentence-transformers>=2.7
+# 不安装也能正常运行：自动降级为 Embedding API 或确定性哈希向量器。
+
+# ============ .doc 老格式支持（可选，仅 Windows）============
+#   pip install pywin32>=306
+# 不安装则 .doc 文件回退到 LibreOffice（soffice）转换。

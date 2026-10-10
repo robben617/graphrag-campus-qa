@@ -1,0 +1,48 @@
+# ============ Python ============
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ============ 环境与密钥（绝不进代码仓库）============
+.env
+.env.local
+
+# ============ 数据库与运行产物（导入后生成）============
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/school_kb.db
+var/
+logs/
+*.log
+.tmp/
+pytest-cache-files-*/
+
+# ============ 本地模型（体积 GB 级，用挂载卷或手动下载）============
+local_models/
+
+# ============ 校方原始素材（含内部征求意见稿，不公开）============
+# 入库副本见 data/raw/，此处仅为原始素材库
+材料/
+
+# ============ 顶层学生手册副本（与 data/raw/handbook/ 内容重复）============
+/2025版《学生手册》.pdf
+
+# ============ 备份 ============
+backups/
+
+# ============ 本地工作区（AI 助手记忆 / 个人笔记，不公开）============
+.workbuddy/
+
+# ============ IDE / 系统 ============
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

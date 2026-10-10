@@ -1,0 +1,60 @@
+# ============================================================
+# Docker 构建上下文排除清单
+# 目的：把 docker compose build 的上下文从 ~3.4GB 降到 ~3MB
+# 注意：排除的是「传给 Docker daemon 的上下文」，不是镜像内容。
+#       Dockerfile 里 COPY 的 app/ data/ frontend/ docs/ requirements.txt
+#       README.md 必须保持可访问，因此不在下方排除。
+# ============================================================
+
+# ---------- 版本控制 / 编辑器 / AI 助手工作区 ----------
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.workbuddy
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 本地模型：3.4GB，构建上下文的最大占用 ----------
+# Dockerfile 第 20 行的 COPY local_models 是注释掉的，
+# 模型按「挂载卷」提供，不打进镜像。
+local_models/
+
+# ---------- 校方原始素材：含内部征求意见稿，不公开 ----------
+# 入库副本在 data/raw/，那份会被 COPY 进镜像，此处仅排除原始素材库。
+材料/
+
+# ---------- 环境变量与密钥：绝不进镜像 ----------
+.env
+.env.local
+
+# ---------- 运行产物 / 缓存 ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+pytest-cache-files-*/
+.tmp/
+logs/
+var/
+backups/
+*.log
+*.db-shm
+*.db-wal
+
+# ---------- 测试与本地脚本：Dockerfile 未 COPY，进上下文无意义 ----------
+tests/
+deploy/
+pytest.ini
+docker-compose.yml
+frontend_server.py
+校园知识问答系统_项目设计文档.md
+
+# ---------- 关于 data/school_kb.db（11MB）----------
+# 这里【刻意不排除】*.db。Dockerfile 启动时会跑 `python -m app.cli import` 幂等重建，
+# 但保留镜像内的 .db 可以让 import 失败时容器仍带着可用知识库起来。
+# 11MB 上下文代价可忽略，如后续想极致瘦身，取消下面一行注释即可：
+# *.db

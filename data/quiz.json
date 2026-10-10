@@ -1,0 +1,29 @@
+[
+  {"id": "quiz:1", "category": "学籍管理", "difficulty": "简单", "question": "学生休学一般以多长时间为期？", "options": ["一学期", "一年", "两年", "三年"], "answer": 1, "explanation": "休学一般以一年为期，期满前可申请复学或续休。", "source": "《2025版学生手册》学籍管理章节"},
+  {"id": "quiz:2", "category": "学籍管理", "difficulty": "简单", "question": "下列哪项属于学籍异动？", "options": ["选课", "补考", "转专业", "借书"], "answer": 2, "explanation": "转专业、休学、复学、退学等属于学籍异动。", "source": "《2025版学生手册》学籍管理章节"},
+  {"id": "quiz:3", "category": "学籍管理", "difficulty": "中等", "question": "转专业一般要求申请学生处于哪个年级？", "options": ["任意年级", "一年级", "三年级", "毕业年级"], "answer": 1, "explanation": "转专业一般面向一年级在校生。", "source": "《2025版学生手册》学籍管理章节"},
+  {"id": "quiz:4", "category": "学籍管理", "difficulty": "中等", "question": "受留校察看处分期间，学籍状态如何？", "options": ["立即注销学籍", "保留学籍以观后效", "自动复学", "转为休学"], "answer": 1, "explanation": "留校察看保留学籍以观后效，表现良好可解除。", "source": "《2025版学生手册》违纪处分章节"},
+
+  {"id": "quiz:5", "category": "违纪处分", "difficulty": "简单", "question": "下列处分种类中最轻的是？", "options": ["记过", "警告", "留校察看", "开除学籍"], "answer": 1, "explanation": "由轻到重：警告、严重警告、记过、留校察看、开除学籍。", "source": "《2025版学生手册》违纪处分章节"},
+  {"id": "quiz:6", "category": "违纪处分", "difficulty": "简单", "question": "下列处分种类中最重的是？", "options": ["警告", "记过", "留校察看", "开除学籍"], "answer": 3, "explanation": "开除学籍是最重的处分，直接终止学籍。", "source": "《2025版学生手册》违纪处分章节"},
+  {"id": "quiz:7", "category": "违纪处分", "difficulty": "中等", "question": "考试作弊一般会面临的处理是？", "options": ["口头提醒", "警告至开除学籍处分并取消评奖资格", "仅作补考处理", "不予追究"], "answer": 1, "explanation": "考试作弊视情节给予记过直至开除学籍，并取消当学年评奖资格。", "source": "《2025版学生手册》违纪处分章节"},
+  {"id": "quiz:8", "category": "违纪处分", "difficulty": "中等", "question": "学生对处分决定不服，应向哪个部门提出申诉？", "options": ["教务处", "后勤保障部", "学生工作部", "图书馆"], "answer": 2, "explanation": "处分申诉由学生工作部受理并组织复查。", "source": "《2025版学生手册》违纪处分章节"},
+
+  {"id": "quiz:9", "category": "奖助学金", "difficulty": "简单", "question": "国家助学金主要面向哪类学生？", "options": ["成绩第一名", "家庭经济困难学生", "全体学生", "研究生"], "answer": 1, "explanation": "国家助学金面向家庭经济困难学生。", "source": "《2025版学生手册》奖助学金章节"},
+  {"id": "quiz:10", "category": "奖助学金", "difficulty": "简单", "question": "申请助学贷款前一般需先完成哪项手续？", "options": ["转专业", "家庭经济困难认定", "缓考", "调宿"], "answer": 1, "explanation": "助学贷款以家庭经济困难认定为基础。", "source": "《2025版学生手册》奖助学金章节"},
+  {"id": "quiz:11", "category": "奖助学金", "difficulty": "中等", "question": "下列哪项通常会影响奖学金评定？", "options": ["借阅图书数量", "有无纪律处分记录", "宿舍朝向", "选课门数"], "answer": 1, "explanation": "受记过及以上处分者取消当学年评奖资格。", "source": "《2025版学生手册》奖助学金章节"},
+  {"id": "quiz:12", "category": "奖助学金", "difficulty": "中等", "question": "奖学金评定最核心的学业指标是？", "options": ["出勤次数", "绩点（GPA）", "社团数量", "义工时长"], "answer": 1, "explanation": "绩点是奖学金评定的核心指标。", "source": "《2025版学生手册》奖助学金章节"},
+
+  {"id": "quiz:13", "category": "宿舍管理", "difficulty": "简单", "question": "宿舍内违规使用大功率电器，可能面临的处理是？", "options": ["无后果", "警告以上处分", "自动退学", "罚款即可"], "answer": 1, "explanation": "违规电器由保卫处查处，可视情节给予警告以上处分。", "source": "《2025版学生手册》宿舍管理章节"},
+  {"id": "quiz:14", "category": "宿舍管理", "difficulty": "简单", "question": "调宿申请应向哪个部门提交？", "options": ["教务处", "学生资助管理中心", "后勤保障部", "保卫处"], "answer": 2, "explanation": "调宿、退宿由后勤保障部办理。", "source": "《2025版学生手册》宿舍管理章节"},
+  {"id": "quiz:15", "category": "宿舍管理", "difficulty": "中等", "question": "多次晚归可能产生的后果是？", "options": ["自动获得奖学金", "视情节给予纪律处分", "提前毕业", "无任何影响"], "answer": 1, "explanation": "多次晚归可视情节给予纪律处分。", "source": "《2025版学生手册》宿舍管理章节"},
+  {"id": "quiz:16", "category": "宿舍管理", "difficulty": "中等", "question": "门禁管理主要由哪个部门负责？", "options": ["保卫处", "教务处", "图书馆", "学生资助管理中心"], "answer": 0, "explanation": "门禁与安全由保卫处负责。", "source": "《2025版学生手册》宿舍管理章节"},
+
+  {"id": "quiz:17", "category": "教务教学", "difficulty": "简单", "question": "成绩不及格的课程通常先参加什么？", "options": ["重修", "补考", "免修", "缓考"], "answer": 1, "explanation": "不及格先补考，补考仍不及格再重修。", "source": "《2025版学生手册》教务教学章节"},
+  {"id": "quiz:18", "category": "教务教学", "difficulty": "简单", "question": "因故不能参加考试，应办理什么手续？", "options": ["缓考", "补考", "重修", "免听"], "answer": 0, "explanation": "因故不能考试应申请缓考。", "source": "《2025版学生手册》教务教学章节"},
+  {"id": "quiz:19", "category": "教务教学", "difficulty": "中等", "question": "补考仍不及格的课程，下一步应如何处理？", "options": ["直接放弃", "报名重修", "申请免修", "自动及格"], "answer": 1, "explanation": "补考仍不及格须报名重修。", "source": "《2025版学生手册》教务教学章节"},
+  {"id": "quiz:20", "category": "教务教学", "difficulty": "中等", "question": "绩点（GPA）的计算基础是？", "options": ["仅看一门课", "课程学分加权平均成绩", "宿舍表现", "选课门数"], "answer": 1, "explanation": "绩点由各课程成绩按学分加权计算。", "source": "《2025版学生手册》教务教学章节"},
+
+  {"id": "quiz:21", "category": "教务教学", "difficulty": "困难", "question": "旷考（未参加考试且未办缓考）的课程，成绩与后续处理通常是？", "options": ["按缓考处理", "成绩记零分并须重修", "自动及格", "直接补考"], "answer": 1, "explanation": "旷考成绩记零分，须报名重修。", "source": "《2025版学生手册》教务教学章节"},
+  {"id": "quiz:22", "category": "奖助学金", "difficulty": "困难", "question": "受记过处分的学生，当学年奖学金评定通常如何处理？", "options": ["正常参评", "取消评奖资格", "加倍发放", "转为助学金"], "answer": 1, "explanation": "受记过及以上处分者取消当学年评奖资格。", "source": "《2025版学生手册》奖助学金章节"}
+]
