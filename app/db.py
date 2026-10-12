@@ -1,13 +1,20 @@
 """SQLite 存储层：连接管理、Schema 初始化、基础查询。
 
-数据模型对应设计文档 §5.1（SQLite 起步，第二阶段迁移 Neo4j）：
+数据模型（当前实现，全部落在单一 SQLite 文件）：
 - categories  主题分类（≥5）
 - entities    实体节点：kind ∈ {entity 领域对象, department 部门, process 流程}
 - documents   源文件（手册/通知），含元数据（发布时间/生效/状态/版本/适用对象）
 - clauses     条款/段落块：chapter 章、article_no 条号、content 原文
 - relations   关系（src, rel, dst, note），端点引用 entities/documents 的稳定 ID
 - faq         FAQ 问答对（Question/Answer）
-- quiz        自测题库（第二阶段启用）
+- quiz        自测题库
+
+关于图存储的选型（重要）：
+本项目的图谱规模为 **82 节点 / 81 边**，用 SQLite 三元组表 + 应用层 BFS 即可承载
+（实测：递归 CTE 三跳 0.82ms，全图 BFS 遍历 0.50ms）。Neo4j 的优势区在十万节点以上、
+以及需要 GDS 图算法库的场景，本项目不在此列。因此**已明确不迁移图数据库**：
+保持单库单事务，避免 SQLite 与图库双写带来的一致性成本。
+详见《校园知识问答系统_项目设计文档.md》「实现现状说明」。
 """
 
 from __future__ import annotations

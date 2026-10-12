@@ -29,6 +29,9 @@
 - POST /evaluation/run  /latest   质量评测
 - GET /health                     健康检查（含本地模型状态）
 - GET /stats                      数据规模统计
+
+Dify 外部知识库适配（独立前缀，仅在配置 DIFY_RETRIEVAL_API_KEY 时注册）：
+- POST /dify/retrieval            按 Dify External Knowledge API 协议暴露混合检索
 """
 
 from __future__ import annotations
@@ -60,6 +63,7 @@ from ..service import versioning as version_mod
 from ..service.conversation import ConversationService
 from ..service.qa import QAService
 from . import deps
+from .dify import router as dify_router
 
 logger = logging.getLogger("school_agent.web")
 
@@ -129,6 +133,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.qa = QAService(db, settings)
     app.state.conv = ConversationService(db, settings)
     app.state.embedder = get_embedder(settings)
+
+    # ---------- Dify 外部知识库适配（可选）----------
+    # 仅在配置了密钥时注册，避免无意中暴露一个不需要鉴权的检索端点。
+    if settings.dify_retrieval_api_key:
+        app.include_router(dify_router, prefix="/dify")
+        logger.info("dify_adapter_enabled path=/dify/retrieval")
+    else:
+        logger.info("dify_adapter_disabled reason=no_DIFY_RETRIEVAL_API_KEY")
 
     # ---------- 中间件：request_id / session_id / 耗时 ----------
     @app.middleware("http")
@@ -406,9 +418,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/api/v1/users")
     def create_user(
         req: UserCreateRequest,
+        user: dict = Depends(deps.get_current_user),
         db: Database = Depends(deps.get_db),
     ):
-        return users_mod.create_user(db, req.username, req.role)
+        # 首个用户免鉴权（bootstrap），此后仅 admin 可创建 —— 规则在服务层判定
+        return users_mod.create_user(db, req.username, req.role, actor=user)
 
     @app.get("/api/v1/users")
     def list_users(
@@ -477,11 +491,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/api/v1/stats")
     def stats(db: Database = Depends(deps.get_db)):
-        from ..ingest.stats import check_minimum, collect
+        from ..ingest.stats import check_minimum, collect, coverage_summary
 
         s = collect(db)
         checks, ok = check_minimum(s)
-        return {"stats": s, "minimum_ok": ok, "checks": [c.__dict__ for c in checks]}
+        return {
+            "stats": s,
+            "minimum_ok": ok,
+            "checks": [c.__dict__ for c in checks],
+            "coverage": coverage_summary(db),
+        }
 
     return app
 

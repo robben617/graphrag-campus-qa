@@ -2,6 +2,7 @@
 
 设计（对应设计文档 §6 基础版错误处理、§7.1 关键指标）：
 - 校验类错误（空问题/超长）→ UserInputError（HTTP 400）
+- 权限不足 → ForbiddenError（HTTP 403）：请求本身合法，只是当前角色无权
 - 数据库不可用 → StorageUnavailable（HTTP 503）
 - 知识库为空 / 无结果 → 在回答层返回"拒答"文本（非异常），便于下游直接展示
 - 服务内部错误 → InternalError（HTTP 500），日志带 request_id 可定位
@@ -49,6 +50,21 @@ class QuestionTooLongError(UserInputError):
 
     def __init__(self, limit: int):
         super().__init__(f"问题过长：最多支持 {limit} 个字符，请精简后再提问。")
+
+
+class ForbiddenError(AppError):
+    """权限不足：当前角色无权执行该操作（HTTP 403）。
+
+    与 UserInputError（400）的区别：400 表示"请求本身不合法"，
+    403 表示"请求合法、参数也对，但你没这个权限"。
+    分开之后，前端可以只凭状态码就跳到"切换身份"引导，不必解析中文文案。
+    """
+
+    http_status = 403
+    code = "FORBIDDEN"
+
+    def __init__(self, message: str = "权限不足", *, detail: Optional[str] = None):
+        super().__init__(message, detail=detail)
 
 
 class StorageUnavailable(AppError):

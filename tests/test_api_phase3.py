@@ -55,9 +55,44 @@ def test_create_user_and_whoami(client):
 
 def test_ingest_notice_requires_teacher(client):
     payload = {"text": "内容", "title": "通知", "category": "奖助学金"}
-    # 匿名 → 403/400 权限不足
+    # 匿名 → 403 权限不足（ForbiddenError）。
+    # 此前与"参数错误"共用 400，语义混淆；现已分开，前端可只凭状态码引导切换身份。
     r = client.post("/api/v1/ingest/notice", json=payload)
-    assert r.status_code == 400  # AppError 默认 400
+    assert r.status_code == 403
+    assert r.json()["code"] == "FORBIDDEN"
+
+
+def test_ingest_notice_student_forbidden(client):
+    """学生角色同样不够：增量入库需要 teacher / admin。"""
+    token = _auth(client, "student")
+    payload = {"text": "内容", "title": "通知", "category": "奖助学金"}
+    r = client.post("/api/v1/ingest/notice", json=payload, headers={"X-User-Token": token})
+    assert r.status_code == 403
+
+
+def test_create_user_bootstrap_then_admin_only(client):
+    """用户创建鉴权：空库时首个账号免鉴权（bootstrap），此后仅 admin 可创建。
+
+    之所以留 bootstrap 豁免：否则空库永远产生不了第一个管理员，形成死锁。
+    """
+    # 第 1 个账号：匿名即可创建（空库）
+    r1 = client.post("/api/v1/users", json={"username": "first_admin", "role": "admin"})
+    assert r1.status_code == 200
+    admin_token = r1.json()["api_token"]
+
+    # 第 2 个：匿名被拒（此前的漏洞：任何人都能建 admin）
+    r2 = client.post("/api/v1/users", json={"username": "sneaky_admin", "role": "admin"})
+    assert r2.status_code == 403
+    assert r2.json()["code"] == "FORBIDDEN"
+
+    # admin 持令牌可以创建
+    r3 = client.post(
+        "/api/v1/users",
+        json={"username": "student_x", "role": "student"},
+        headers={"X-User-Token": admin_token},
+    )
+    assert r3.status_code == 200
+    assert r3.json()["role"] == "student"
 
 
 def test_ingest_notice_as_teacher(client):

@@ -15,7 +15,7 @@ import secrets
 from typing import List, Optional
 
 from ..db import Database
-from ..errors import AppError
+from ..errors import AppError, ForbiddenError
 
 ROLES = {"student", "teacher", "admin"}
 DEFAULT_USER = "anonymous"
@@ -25,15 +25,33 @@ def _token() -> str:
     return secrets.token_hex(16)
 
 
-def create_user(db: Database, username: str, role: str = "student") -> dict:
+def user_count(db: Database) -> int:
+    with db.session() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"])
+
+
+def create_user(db: Database, username: str, role: str = "student", *, actor: Optional[dict] = None) -> dict:
+    """创建用户。
+
+    鉴权规则（bootstrap）：系统内**一个用户都没有**时，允许任何人创建首个账号——
+    否则空库永远无法产生第一个管理员，形成死锁。此后创建用户必须由 admin 发起。
+
+    actor 为调用方身份（由路由注入 get_current_user 得到，匿名用户为 role=student）。
+    """
     if role not in ROLES:
         raise AppError(f"角色必须为 {'/'.join(sorted(ROLES))}")
     uid = hashlib.sha1(username.encode("utf-8")).hexdigest()[:16]
     token = _token()
     with db.session() as conn:
+        total = int(conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"])
         exists = conn.execute("SELECT user_id FROM users WHERE username = ?", (username,)).fetchone()
         if exists:
             raise AppError(f"用户名已存在: {username}")
+        if total > 0 and (actor is None or actor.get("role") != "admin"):
+            raise ForbiddenError(
+                "权限不足：创建用户需要 admin 角色（仅系统内首个用户可免鉴权创建）",
+                detail=f"当前角色: {(actor or {}).get('role', DEFAULT_USER)}",
+            )
         conn.execute(
             "INSERT INTO users (user_id, username, role, api_token) VALUES (?,?,?,?)",
             (uid, username, role, token),
@@ -64,4 +82,7 @@ def resolve_user(db: Database, token: Optional[str], user_id: Optional[str] = No
 
 def require_role(user: dict, roles: set) -> None:
     if user["role"] not in roles:
-        raise AppError("权限不足：该操作需要 " + "/".join(sorted(roles)) + " 角色", detail=user["role"])
+        raise ForbiddenError(
+            "权限不足：该操作需要 " + "/".join(sorted(roles)) + " 角色",
+            detail=f"当前角色: {user['role']}",
+        )

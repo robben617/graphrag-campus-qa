@@ -108,3 +108,89 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #bfdbfe; border-c
 .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
 .kv { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed var(--line); }
 .kv .k { color: var(--muted); }
+
+/* ===== 问答：会话侧边栏 ===== */
+.chat-layout { display: grid; grid-template-columns: 236px 1fr; gap: 16px; align-items: start; }
+.session-panel {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 140px); position: sticky; top: 0;
+}
+.session-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+.session-item {
+  position: relative; padding: 8px 26px 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.session-item:hover { background: #f1f5f9; }
+.session-item.active { background: #eff6ff; border-color: #bfdbfe; }
+.session-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.session-del {
+  position: absolute; right: 4px; top: 8px; border: 0; background: transparent; color: #cbd5e1;
+  cursor: pointer; font-size: 12px; padding: 2px 5px; border-radius: 4px; display: none;
+}
+.session-item:hover .session-del { display: block; }
+.session-del:hover { background: #fef2f2; color: var(--danger); }
+.mini-btn {
+  width: 100%; border: 1px dashed var(--line); background: #f8fafc; border-radius: 8px;
+  padding: 8px; cursor: pointer; font-size: 13px; color: var(--muted);
+}
+
+/* ===== 身份组件 ===== */
+.identity { position: relative; }
+.identity-card {
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; background: #f8fafc;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.identity-who { font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.identity-panel {
+  position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; z-index: 30;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .12); display: flex; flex-direction: column; gap: 6px;
+}
+.identity-panel input, .identity-panel select, .identity-panel textarea { width: 100%; }
+.btn-mini { padding: 6px 10px; font-size: 12px; border-radius: 7px; }
+
+/* ===== 掌握标记 ===== */
+.mastery-stat { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.mastery-row {
+  display: flex; justify-content: space-between; gap: 12px; align-items: center;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;
+}
+.mastery-row.mastered { border-left: 3px solid var(--ok); }
+.mastery-row.unmastered { border-left: 3px solid var(--warn); }
+.mastery-name { font-weight: 600; margin-bottom: 3px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mastery-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ===== 维护端表单 ===== */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.form-grid input { width: 100%; }
+.checkbox-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.checkbox-row input { width: auto; }
+
+/* ===== 图谱：关系路径面板 ===== */
+.graph-main { display: grid; grid-template-columns: 1fr 280px; gap: 14px; align-items: start; }
+.path-panel {
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+  max-height: 520px; overflow-y: auto;
+}
+.path-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.path-item {
+  border-left: 3px solid var(--brand); background: #f8fafc; border-radius: 0 6px 6px 0;
+  padding: 8px 10px; margin-bottom: 8px; font-size: 12px; line-height: 1.8;
+}
+.rel-chip {
+  display: inline-block; background: #eff6ff; color: var(--brand); border-radius: 4px;
+  padding: 0 5px; font-size: 11px; font-family: Consolas, monospace;
+}
+.path-box { margin-top: 10px; background: #f8fafc; border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; padding: 8px 12px; }
+.path-line { font-size: 12px; line-height: 1.8; }
+.cite-link { color: var(--brand); text-decoration: none; border-bottom: 1px dashed var(--brand); }
+.cite-link:hover { color: var(--brand-dark); }
+
+/* 窄屏适配：会话栏与图谱路径面板折行 */
+@media (max-width: 1080px) {
+  .chat-layout, .graph-main { grid-template-columns: 1fr; }
+  .session-panel { position: static; max-height: 260px; }
+  .compare-cols { grid-template-columns: 1fr; }
+}

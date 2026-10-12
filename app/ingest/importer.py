@@ -47,6 +47,7 @@ class ImportResult:
     faq: int = 0
     quiz: int = 0
     vectors: int = 0
+    no_text_documents: int = 0  # 提取不到文本、已跳过条款写入的文件数
     warnings: List[str] = None  # type: ignore[assignment]
 
     def __post_init__(self):
@@ -62,6 +63,7 @@ class ImportResult:
             "faq": self.faq,
             "quiz": self.quiz,
             "vectors": self.vectors,
+            "no_text_documents": self.no_text_documents,
             "warnings": self.warnings,
         }
 
@@ -240,10 +242,13 @@ def import_raw_documents(db: Database, raw_dir: Path) -> ImportResult:
             content_hash = _sha256(raw_text)
             doc_id = _doc_identity(meta, fp, content_hash)
             mode = meta.get("split_mode", "auto")
-            blocks = doc_parser.split_into_blocks(raw_text, mode)
 
-            if raw_text.strip() == PDF_PLACEHOLDER:
-                result.warnings.append(f"{fp.name}: 未提取到文本（可能是扫描版 PDF，OCR 属后续阶段）")
+            # 无文本层判定：扫描版 PDF / 纯图片文件，pypdf 提取不到任何文字。
+            # 这类文件**绝不能**把占位符当条款写进知识库 —— 否则
+            # 「【未提取到文本内容】」会变成一条可被检索命中的记录，污染检索结果，
+            # 还可能被当作"有依据"混进答案。这里保留文档记录（维护端能看到
+            # "清单里有它、但内容没进来"），只跳过条款写入。
+            no_text = (not raw_text.strip()) or raw_text.strip() == PDF_PLACEHOLDER
 
             conn.execute(
                 """
@@ -271,6 +276,16 @@ def import_raw_documents(db: Database, raw_dir: Path) -> ImportResult:
 
             # 幂等：先删除该文档旧条款，再写入新条款
             conn.execute("DELETE FROM clauses WHERE doc_id = ?", (doc_id,))
+
+            if no_text:
+                result.no_text_documents += 1
+                result.warnings.append(
+                    f"{fp.name}: 未提取到任何文本（疑似扫描版 PDF 或纯图片），"
+                    f"已保留文档记录但【跳过条款写入】——需先做 OCR 或改用文本版文件，否则检索不到它。"
+                )
+                continue
+
+            blocks = doc_parser.split_into_blocks(raw_text, mode)
             for block in blocks:
                 if not block.content:
                     continue
@@ -440,6 +455,7 @@ def run_import(db: Database, data_dir: Path, build_vectors: bool = True) -> Impo
     counts["relations"] = r_kg.relations
     counts["faq"] = faq_n
     counts["quiz"] = quiz_n
+    counts["no_text_documents"] = r_raw.no_text_documents
     warnings.extend(r_raw.warnings)
 
     # 向量索引（幂等：只补无向量的条款）

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>校园知识问答系统</title>
   <!-- 静态资源带版本号，避免浏览器缓存旧文件导致界面异常；改动前端后请递增 v -->
-  <link rel="stylesheet" href="css/style.css?v=5" />
+  <link rel="stylesheet" href="css/style.css?v=7" />
 </head>
 <body>
   <div class="layout">
@@ -18,9 +18,12 @@
         <button class="nav-item active" data-view="chat">💬 智能问答</button>
         <button class="nav-item" data-view="graph">🕸️ 知识图谱</button>
         <button class="nav-item" data-view="quiz">📝 校规自测</button>
+        <button class="nav-item" data-view="mastery">🎯 掌握标记</button>
         <button class="nav-item" data-view="compare">⚖️ 检索对比</button>
+        <button class="nav-item" data-view="admin">🛠️ 维护端</button>
         <button class="nav-item" data-view="about">ℹ️ 系统信息</button>
       </nav>
+      <div class="identity" id="identity-box"></div>
       <div class="disclaimer">本系统仅为信息查询辅助，请以学校官方发布文件为准。</div>
     </aside>
 
@@ -28,16 +31,21 @@
       <section id="view-chat" class="view active"></section>
       <section id="view-graph" class="view"></section>
       <section id="view-quiz" class="view"></section>
+      <section id="view-mastery" class="view"></section>
       <section id="view-compare" class="view"></section>
+      <section id="view-admin" class="view"></section>
       <section id="view-about" class="view"></section>
     </main>
   </div>
-  <script src="js/api.js?v=5"></script>
-  <script src="js/chat.js?v=5"></script>
-  <script src="js/graph.js?v=5"></script>
-  <script src="js/quiz.js?v=5"></script>
-  <script src="js/compare.js?v=5"></script>
-  <script src="js/about.js?v=5"></script>
-  <script src="js/main.js?v=5"></script>
+  <script src="js/api.js?v=7"></script>
+  <script src="js/main.js?v=7"></script>
+  <script src="js/chat.js?v=7"></script>
+  <script src="js/graph.js?v=7"></script>
+  <script src="js/quiz.js?v=7"></script>
+  <script src="js/mastery.js?v=7"></script>
+  <script src="js/compare.js?v=7"></script>
+  <script src="js/admin.js?v=7"></script>
+  <script src="js/about.js?v=7"></script>
+  <script src="js/user.js?v=7"></script>
 </body>
 </html>

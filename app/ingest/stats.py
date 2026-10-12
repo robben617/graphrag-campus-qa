@@ -64,6 +64,15 @@ def collect(db: Database) -> Dict[str, int]:
             if d1 and d2 and d1 != d2:
                 cross += 1
 
+        # 「有文档记录但一条条款都没写进去」= 扫描件等无文本层文件，
+        # 语义上等价于"该文件的内容没有进入知识库"。
+        no_text_docs = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM documents d "
+                "WHERE NOT EXISTS (SELECT 1 FROM clauses c WHERE c.doc_id = d.doc_id)"
+            ).fetchone()[0]
+        )
+
         return {
             "documents": docs,
             "handbook": handbook,
@@ -78,7 +87,61 @@ def collect(db: Database) -> Dict[str, int]:
             "cross_category": cross,
             "faq": faq,
             "quiz": quiz,
+            "no_text_documents": no_text_docs,
         }
+
+
+def category_coverage(db: Database) -> List[Dict[str, Any]]:
+    """各主题分类的覆盖度：文档数 / 条款数 / 实体数，以及是否有原文支撑。
+
+    为什么会需要这个：图谱按 5 个主题分类建模了实体，但知识库里**并非每个分类
+    都有原始文档**。没有原文支撑的分类，用户提问时检索必然落空、触发结构化拒答
+    —— 而图谱却仍能给出归口部门，两者容易让人误判"这个分类已经完备"。
+    把这个缺口显式暴露出来，比在简历/文档里假装"5 分类全部就绪"更站得住脚。
+    """
+    with db.session() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.name AS category,
+                   c.description AS description,
+                   (SELECT COUNT(*) FROM documents d WHERE d.category = c.name) AS docs,
+                   (SELECT COUNT(*) FROM clauses cl JOIN documents d2 ON cl.doc_id = d2.doc_id
+                     WHERE d2.category = c.name) AS clauses,
+                   (SELECT COUNT(*) FROM entities e WHERE e.category = c.name) AS entities
+            FROM categories c
+            ORDER BY c.name
+            """
+        ).fetchall()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        docs = int(r["docs"])
+        out.append(
+            {
+                "category": r["category"],
+                "description": r["description"] or "",
+                "documents": docs,
+                "clauses": int(r["clauses"]),
+                "entities": int(r["entities"]),
+                "covered": docs > 0,
+                "note": "" if docs > 0 else "该分类仅有图谱实体、尚无原文条款，相关提问会拒答",
+            }
+        )
+    return out
+
+
+def coverage_summary(db: Database) -> Dict[str, Any]:
+    """覆盖度汇总：多少分类有原文支撑、哪些是空缺。"""
+    rows = category_coverage(db)
+    covered = [r["category"] for r in rows if r["covered"]]
+    missing = [r["category"] for r in rows if not r["covered"]]
+    return {
+        "total": len(rows),
+        "covered_count": len(covered),
+        "missing_count": len(missing),
+        "covered": covered,
+        "missing": missing,
+        "detail": rows,
+    }
 
 
 def check_minimum(stats: Dict[str, int]) -> Tuple[List[ScaleCheck], bool]:
@@ -116,6 +179,7 @@ def format_report(stats: Dict[str, int], checks: List[ScaleCheck], ok: bool) -> 
         ("cross_category", "跨分类关系"),
         ("faq", "FAQ 问答组"),
         ("quiz", "自测题"),
+        ("no_text_documents", "未入库文件"),
     ]
     for key, label in order:
         lines.append(f"  {label:<14}: {stats.get(key, 0)}")

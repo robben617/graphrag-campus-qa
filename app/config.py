@@ -157,6 +157,11 @@ class Settings:
     ml_device: str = field(
         default_factory=lambda: os.environ.get("ML_DEVICE", "cpu")
     )
+    # Dify 外部知识库适配（可选；未配置 KEY 则不注册 /dify/retrieval 路由）
+    dify_retrieval_api_key: str = field(
+        default_factory=lambda: os.environ.get("DIFY_RETRIEVAL_API_KEY", "")
+    )
+    dify_max_top_k: int = field(default_factory=lambda: _env_int("DIFY_MAX_TOP_K", 20))
 
     @property
     def data_raw_dir(self) -> str:
