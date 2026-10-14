@@ -4,9 +4,9 @@
 本服务显式发送 Cache-Control: no-store，避免浏览器复用旧 JS/CSS 导致
 "点击菜单空白"这类新旧文件不匹配的问题。
 
-用法：
-    python frontend_server.py                 # 默认 http://127.0.0.1:5500
-    python frontend_server.py --port 8080
+用法（在仓库根目录执行）：
+    python scripts/frontend_server.py                 # 默认 http://127.0.0.1:5500
+    python scripts/frontend_server.py --port 8080
 """
 
 from __future__ import annotations
@@ -17,7 +17,8 @@ import http.server
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+# 本脚本位于 scripts/，而静态资源在仓库根目录下的 frontend/
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
