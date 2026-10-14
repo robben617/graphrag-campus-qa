@@ -23,7 +23,7 @@
 - 测试口径：64 通过 + 1 跳过 →（AT-09 降级 +2）65 项 →（权限边界 +2）**67 项（66 通过 + 1 跳过）**
 
 ### 工程
-- 新增 GitHub Actions CI（Python 3.10 / 3.12：安装依赖 → 前端 `node --check` → 数据准备 → pytest）
+- 新增 GitHub Actions CI（Python 3.10 / 3.12）：前端 `node --check`、`data/**/*.json` 完整性、后端装配冒烟、6 个语料无关用例。完整 67 项依赖未公开的原始语料，需在本地运行
 - 目录整理：设计文档移入 `docs/`、开发脚本移入 `scripts/`；新增 `docs/README.md` 文档索引
 - README 首屏补充徽章与 Mermaid 架构图；新增「复现评测指标」「能力边界与路线图」
 

@@ -258,7 +258,9 @@ python -m pytest -v
 
 > 测试默认 `USE_LOCAL_* = off`（哈希向量器）以加速；本地模型推理在第三阶段已单独实测（BGE 512 维、reranker 排序正确）。
 
-**CI**：`.github/workflows/ci.yml` 在 push / PR 时自动运行（Python 3.10 + 3.12）。因原始 PDF 依版权约定未入库，CI 会先执行 `scripts/prepare_ci_data.py` 剔除未分发文件的 manifest 条目，以**仓库内样例数据**运行；并排除断言本地模型文件存在的 `test_ml_local_available_detection`。想要完整的 67 项，请在本地放好原始文件与 BGE 模型后执行 `python -m pytest -q`。
+**CI**：`.github/workflows/ci.yml` 在 push / PR 时自动运行（Python 3.10 + 3.12），负责**不依赖原始语料**的那部分质量门禁：前端脚本语法检查、`data/**/*.json` 完整性、后端应用装配冒烟，以及 6 个语料无关用例（含评测集规模与 Embedding 降级链）。
+
+> 完整 67 项测试依赖 `data/raw/` 下的原始语料（学生手册 PDF 等，依版权未入库），因此无法在 CI 中运行——请在本地放好原始文件与 BGE 模型后执行 `python -m pytest -q`。
 
 ## 目录结构
 
