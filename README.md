@@ -52,7 +52,8 @@ flowchart LR
 - ✅ 质量评测：**55 题**评测集，报告 Recall@K / 事实一致性 / 引用覆盖率（实测 Recall@5 = **0.89~0.90**、事实一致性 = **0.69~0.70**、引用覆盖率 = **100%**；口径与复现方法见「复现评测指标」）
 - ✅ 增量入库（老师维护端）：上传通知 → 解析 → SUPERSEDES 自动检测 → 入库
 - ✅ 多用户隔离与权限：student / teacher / admin，Token 鉴权，会话/掌握/答题按用户隔离
-- ✅ 用户自带大模型密钥（BYOK）：每人可配置自己的 API Key / Base URL / 模型，密钥 Fernet 加密落库、接口只回掩码、支持保存前连通性测试与一键清除（见「多用户部署」）
+- ✅ 用户自带大模型密钥（BYOK）：每人可配置自己的 API Key / Base URL / 模型，密钥 Fernet 加密落库、接口只回掩码、支持保存前连通性测试与一键清除（见「部署形态与对外推广」）
+- ✅ 两种部署形态：`public`（对外演示，不采集用户密钥、默认零成本摘编 + 每日额度）/ `selfhost`（自部署，开放 BYOK 与默认生成），一个环境变量切换，接口与降级行为完全一致
 - ✅ 答案引用全量展开：来源条款 + 关系路径 + 原文片段
 - ✅ 容器化：Dockerfile + docker-compose（应用 + nginx 反代）；备份/恢复脚本
 - ✅ 平台集成：`/dify/retrieval` 按 Dify External Knowledge API 协议暴露混合检索（默认关闭，配置 `DIFY_RETRIEVAL_API_KEY` 后启用）
@@ -179,28 +180,65 @@ python -m http.server 5500
 | 检索 | `GET /search/compare?q=` |
 | 时效 | `GET /versioning` |
 | 用户 | `POST/GET /users`、`GET /me`（Token 鉴权 `X-User-Token`） |
-| 大模型密钥 | `GET/PUT/DELETE /llm/config`、`POST /llm/config/test`（用户自带 Key，见「多用户部署」） |
+| 问答 | `POST /ask`（`mode` 可选：`auto`/`extractive`/`llm`）、`POST /sessions/{id}/ask` |
+| 大模型密钥 | `GET/PUT/DELETE /llm/config`、`POST /llm/config/test`（BYOK，仅 `selfhost` 形态可写，见「部署形态与对外推广」） |
 | 维护 | `POST /ingest/notice`（老师）、`POST /evaluation/run`、`GET /evaluation/latest` |
 | 引用 | `GET /graph/paths/{node_id}` |
 | 运维 | `GET /health`、`GET /stats` |
 | 集成 | `POST /dify/retrieval`（Dify External Knowledge API 协议，默认关闭） |
 
-## 多用户部署（把系统开放给别人用）
+## 部署形态与对外推广
 
-默认情况下，大模型走的是 `.env` 里那一把 `LLM_API_KEY`——自己用没问题，开放给外部用户就等于让别人花你的钱。
-系统支持**每个用户配置自己的 Key**（BYOK），费用与额度各自承担。
+同一份代码，**一个环境变量**切换两种形态：
 
-**部署方要做的两件事**（其余开箱即用）：
+| 形态 | `SCHOOL_DEPLOY_MODE` | 页面上有「模型设置」吗 | 默认回答方式 | 谁付钱 |
+|---|---|---|---|---|
+| **公开演示**（默认） | `public` | 没有 | 原文摘编（零成本） | 部署方，且受每日额度限制 |
+| **自部署 / 自用** | `selfhost` | 有（用户自带 Key） | 大模型生成 | 用户自己 |
+
+默认选 `public`，是因为一个陌生访客打开页面就被要求「粘贴你的 API Key」，
+在观感上和钓鱼页没有区别——**这一步会直接劝退第一次访问的人**。
+所以公开形态下不采集用户密钥，默认返回零成本的条款原文摘编，
+大模型作为可选增强；而真正要带自己的模型跑的人，是那些把项目部署到自己机器上的用户，
+他们显式声明 `selfhost` 即可。
+
+公开形态下「要不要花钱」由三道闸门依次决定，任一道不过就退回摘编（对用户仍是完整答案，不是报错）：
+
+| 闸门 | 触发条件 | 结果 |
+|---|---|---|
+| ① 回答方式 | 用户没要求 `mode=llm` | 直接摘编，不调模型 |
+| ② 密钥可用性 | 没有可用 Key | 摘编 + 提示 |
+| ③ 每日额度 | 单用户或全站额度用完 | 摘编 + 提示原因 |
+
+```bash
+# 公开演示（默认值，写不写都一样）
+SCHOOL_DEPLOY_MODE=public
+ALLOW_SERVER_LLM_FALLBACK=true          # true 才允许"借用"部署方的 Key
+PUBLIC_LLM_DAILY_PER_USER=30            # 每人每天最多 30 次生成（<=0 不限）
+PUBLIC_LLM_DAILY_TOTAL=300              # 全站每天最多 300 次（<=0 不限）
+
+# 想做到完全零成本：关掉兜底 + 摘编模式，检索链路（jieba + BGE + RRF + rerank）本地不花钱
+ALLOW_SERVER_LLM_FALLBACK=false
+
+# 自部署 / 自用：一个变量就能拿回"模型设置"入口与默认生成
+SCHOOL_DEPLOY_MODE=selfhost
+```
+
+> 关掉兜底后，公开站点就是纯检索问答：**零 API 成本、零密钥风险**，
+> 且不会被大模型改写条款措辞——对校园制度问答来说反而更可信。
+
+### 自部署形态下的自带密钥（BYOK）
+
+`selfhost` 形态下，每个用户可以配置自己的 Key，费用与额度各自承担。
 
 ```bash
 # 1. 指定加密主密钥（不设则自动生成 data/.llm_secret，仅适合本地）
 LLM_CONFIG_SECRET=<32 字节以上随机串>
-
-# 2. 关掉服务器兜底，避免陌生用户白嫖你的额度
+# 2. （可选）关掉服务器兜底，强制人人用自己的 Key
 ALLOW_SERVER_LLM_FALLBACK=false
 ```
 
-**用户要做的**：左下角「创建 / 切换身份」→ 展开面板 → 填 Base URL、模型名、API Key → 「测试」→「保存」。
+**用户操作**：左下角「⚙ 模型设置」→ 填 Base URL、模型名、API Key →「测试」→「保存」。
 保存后立即对本人生效，无需重启服务。
 
 | 项 | 说明 |
@@ -210,9 +248,12 @@ ALLOW_SERVER_LLM_FALLBACK=false
 | 隔离粒度 | 按 `X-User-Token` 解析出的 `user_id`，匿名身份不能保存 |
 | 未配置时 | 开启兜底 → 用服务器 key；关闭兜底 → 回退为「原文摘编」并在 `degraded` 中置真 |
 | 安全限制 | `base_url` 禁止指向本机/内网（防 SSRF）；测试接口按用户限频 |
+| 公开形态下 | `PUT/DELETE /llm/config`、`/llm/config/test` 一律 403（`detail=byok_disabled`），入口也不渲染 |
 
 完整设计（数据模型、降级矩阵、错误矩阵、威胁模型、迁移与回滚）见
-[`docs/第四阶段-用户自带密钥设计.md`](docs/第四阶段-用户自带密钥设计.md)。
+[`docs/第四阶段-用户自带密钥设计.md`](docs/第四阶段-用户自带密钥设计.md)；
+公开推广的取舍与额度实现见
+[`docs/第五阶段-公开推广与成本控制.md`](docs/第五阶段-公开推广与成本控制.md)。
 
 ## 数据说明
 
@@ -285,13 +326,13 @@ curl -X POST http://127.0.0.1:8000/api/v1/evaluation/run -H "X-User-Token: <teac
 python -m pytest -v
 ```
 
-77 个测试（76 通过 + 1 跳过）覆盖：AT-01（幂等+最小规模）、AT-02（回答+引用）、AT-03（拒答）、AT-04（多轮指代）、AT-05（图谱邻居）、AT-06（自测错题）、AT-07（掌握标记）、AT-08（非法输入/不可用）、**AT-09（Embedding 降级）**、AT-11（时效替代），以及向量/混合/检索对比（P1）、本地模型接入/reranker/增量入库/多用户隔离/评测/引用路径（P2）、权限边界（403 与用户创建 bootstrap）、用户自带密钥（BYOK：掩码、密文落库、隔离、URL 校验、兜底开关）。
+95 个测试（94 通过 + 1 跳过）覆盖：AT-01（幂等+最小规模）、AT-02（回答+引用）、AT-03（拒答）、AT-04（多轮指代）、AT-05（图谱邻居）、AT-06（自测错题）、AT-07（掌握标记）、AT-08（非法输入/不可用）、**AT-09（Embedding 降级）**、AT-11（时效替代），以及向量/混合/检索对比（P1）、本地模型接入/reranker/增量入库/多用户隔离/评测/引用路径（P2）、权限边界（403 与用户创建 bootstrap）、用户自带密钥（BYOK：掩码、密文落库、隔离、URL 校验、兜底开关）、部署形态与额度（public/selfhost 门控、摘编优先、三道闸门、按天额度与 fail-closed）。
 
 > 测试默认 `USE_LOCAL_* = off`（哈希向量器）以加速；本地模型推理在第三阶段已单独实测（BGE 512 维、reranker 排序正确）。
 
 **CI**：`.github/workflows/ci.yml` 在 push / PR 时自动运行（Python 3.10 + 3.12），负责**不依赖原始语料**的那部分质量门禁：前端脚本语法检查、`data/**/*.json` 完整性、后端应用装配冒烟，以及 6 个语料无关用例（含评测集规模与 Embedding 降级链）。
 
-> 完整 77 项测试依赖 `data/raw/` 下的原始语料（学生手册 PDF 等，依版权未入库），因此无法在 CI 中运行——请在本地放好原始文件与 BGE 模型后执行 `python -m pytest -q`。
+> 完整 95 项测试依赖 `data/raw/` 下的原始语料（学生手册 PDF 等，依版权未入库），因此无法在 CI 中运行——请在本地放好原始文件与 BGE 模型后执行 `python -m pytest -q`。
 
 ## 目录结构
 
@@ -315,7 +356,7 @@ local_models/        # 本地 BGE 模型（gitignore，部署时挂载卷）
 deploy/              # nginx 反向代理配置
 docs/                # 项目设计文档 + 第一/二/三阶段设计说明（索引见 docs/README.md）
 scripts/             # 本地工具（frontend_server.py：禁用缓存的静态服务器）
-tests/               # pytest 测试（77 个）
+tests/               # pytest 测试（95 个）
 .github/workflows/   # CI（push / PR 自动运行）
 Dockerfile
 docker-compose.yml

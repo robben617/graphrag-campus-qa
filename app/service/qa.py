@@ -64,7 +64,7 @@ class QAAnswer:
     question: str
     answer: str
     found: bool = True
-    mode: str = "混合检索"  # 混合检索 | 大模型生成 | 精确FAQ | 拒答
+    mode: str = "混合检索"  # 原文摘编 | 大模型生成 | 精确FAQ | 拒答
     citations: List[Citation] = field(default_factory=list)
     entities: List[dict] = field(default_factory=list)
     subgraph: Subgraph = field(default_factory=Subgraph)
@@ -72,6 +72,10 @@ class QAAnswer:
     conflict_notice: Optional[str] = None
     # 降级原因提示（如向量检索不可用 → 已切换关键词模式），对齐设计文档 §7.2
     degradation_notice: Optional[str] = None
+    # 模式说明（信息性，非故障）：例如"公开演示默认返回原文摘编"
+    mode_notice: Optional[str] = None
+    # 本次答案是摘编、且当前有可用大模型时，前端可提示"切换到大模型增强"
+    can_enhance: bool = False
     disclaimer: str = "本系统仅为信息查询辅助，请以学校官方发布文件为准。"
 
     def to_dict(self) -> dict:
@@ -86,6 +90,8 @@ class QAAnswer:
             "degraded": self.degraded,
             "conflict_notice": self.conflict_notice,
             "degradation_notice": self.degradation_notice,
+            "mode_notice": self.mode_notice,
+            "can_enhance": self.can_enhance,
             "disclaimer": self.disclaimer,
         }
 
@@ -132,8 +138,17 @@ class QAService:
         question: Optional[str],
         history: Optional[List[dict]] = None,
         llm: Optional[LLMClient] = None,
+        *,
+        generate: bool = True,
+        extractive_notice: Optional[str] = None,
+        enhance_allowed: bool = True,
     ) -> QAAnswer:
-        """llm 用于按请求注入「用户自带的模型客户端」；不传则使用服务器默认配置。"""
+        """llm 用于按请求注入「用户自带的模型客户端」；不传则使用服务器默认配置。
+
+        generate=False 表示这次不调用大模型，直接返回原文摘编（零成本路径）。
+        是否走生成由 **路由层** 按部署形态与额度决定，这里只负责执行，
+        避免把"该不该花钱"的策略混进检索编排里。
+        """
         q = self._validate(question)
         client = llm or self.llm
 
@@ -190,7 +205,13 @@ class QAService:
             {"doc_title": h.doc_title, "chapter": h.chapter, "article_no": h.article_no, "content": h.content}
             for h in hits
         ]
-        answer_text, mode, degraded = self._generate(q, evidence, hits, client)
+        if generate:
+            answer_text, mode, degraded = self._generate(q, evidence, hits, client)
+            mode_notice = None
+        else:
+            answer_text, mode, degraded = self._extract_answer(q, hits), "原文摘编", False
+            mode_notice = extractive_notice
+        generated = mode == "大模型生成"
 
         # 掌握标记提示：未掌握的相关知识点追加提示
         answer_text = self._append_mastery_hint(answer_text, entities)
@@ -207,6 +228,12 @@ class QAService:
             degraded=degraded or bool(degradation),
             conflict_notice=conflict,
             degradation_notice=degradation,
+            mode_notice=mode_notice,
+            # 摘编答案 + 允许增强 → 前端提示"切到大模型增强再问一次"。
+            # 这里**不能**用 client.available 判断：摘编模式下传进来的是「不可用客户端」
+            # （为了让多轮改写也走零成本分支），用它判断会导致引导永远不出现。
+            # 是否真的有大模型可用，由路由层算好后通过 enhance_allowed 传进来。
+            can_enhance=(not generated) and enhance_allowed,
         )
 
     def _faq_answer(self, q, faq_match, hits, entities, active_ids, degradation_notice=None) -> QAAnswer:
@@ -231,7 +258,7 @@ class QAService:
             answer_text = client.generate(q, evidence)
             return answer_text, "大模型生成", False
         except Exception:  # noqa: BLE001 - 任意异常都降级
-            return self._extract_answer(q, hits), "混合检索", True
+            return self._extract_answer(q, hits), "原文摘编", True
 
     def _extract_answer(self, question, hits) -> str:
         parts = [EXTRACT_TEMPLATE.rstrip("\n")]

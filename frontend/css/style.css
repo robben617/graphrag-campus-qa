@@ -62,7 +62,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #bfdbfe; border-c
 .chat-box { display: flex; flex-direction: column; gap: 14px; }
 .chat-input-row { display: flex; gap: 10px; align-items: flex-end; }
 .chat-input-row textarea { flex: 1; min-height: 64px; resize: vertical; }
-.messages { display: flex; flex-direction: column; gap: 14px; }
+/* 消息区单独滚动：否则长会话会把「回答方式」和输入框顶到屏幕外，用户找不到输入口 */
+.messages {
+  display: flex; flex-direction: column; gap: 14px;
+  max-height: calc(100vh - 240px); overflow-y: auto; padding-right: 4px;
+}
 .msg { max-width: 86%; padding: 12px 16px; border-radius: 12px; line-height: 1.7; white-space: pre-wrap; }
 .msg.user { align-self: flex-end; background: var(--brand); color: #fff; }
 .msg.assistant { align-self: flex-start; background: #fff; border: 1px solid var(--line); }
@@ -187,6 +191,32 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #bfdbfe; border-c
 .path-line { font-size: 12px; line-height: 1.8; }
 .cite-link { color: var(--brand); text-decoration: none; border-bottom: 1px dashed var(--brand); }
 .cite-link:hover { color: var(--brand-dark); }
+
+/* ===== 回答方式切换（摘编 / 大模型增强） ===== */
+.mode-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 2px 0 8px;
+}
+.mode-seg {
+  display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  background: #f8fafc;
+}
+.mode-btn {
+  border: 0; background: transparent; padding: 5px 12px; font-size: 12px;
+  color: var(--muted); cursor: pointer;
+}
+.mode-btn + .mode-btn { border-left: 1px solid var(--line); }
+.mode-btn:hover { background: #eef2ff; }
+.mode-btn.active { background: var(--brand); color: #fff; font-weight: 600; }
+.mode-tip { font-size: 11px; }
+
+/* 摘编答案上的「改用大模型」引导 */
+.enhance-hint {
+  margin-top: 8px; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+  background: #eff6ff; border: 1px dashed #bfdbfe; color: #1e40af;
+}
+.enhance-hint a { color: var(--brand); text-decoration: none; border-bottom: 1px dashed var(--brand); cursor: pointer; }
+.enhance-hint a:hover { color: var(--brand-dark); }
 
 /* 窄屏适配：会话栏与图谱路径面板折行 */
 @media (max-width: 1080px) {

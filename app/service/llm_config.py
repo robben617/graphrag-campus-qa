@@ -221,7 +221,13 @@ def build_transient_config(
 def public_view(
     settings: Settings, cfg: Optional[UserLLMConfig], *, server_available: bool
 ) -> dict:
-    """给前端的视图：不含明文 key，也不含服务器 key 的任何片段。"""
+    """给前端的视图：不含明文 key，也不含服务器 key 的任何片段。
+
+    额外暴露三个「部署策略」字段，让前端能自行决定要不要渲染配置入口：
+    - byok_allowed：是否开放自带密钥（public 部署为 False，整块 UI 隐藏）
+    - default_mode：默认回答方式（extractive / llm），决定问答页的初始选中项
+    - deploy_mode：public / selfhost，仅用于提示文案
+    """
     has_user = bool(cfg and cfg.api_key)
     if has_user:
         source = "user"
@@ -240,6 +246,9 @@ def public_view(
         "server_fallback": bool(settings.allow_server_llm_fallback and server_available),
         # 前端据此提示「没配 key 就只能看原文摘编」，而不是让用户猜为什么答案变短了
         "effective": source != "none",
+        "deploy_mode": settings.deploy_mode,
+        "byok_allowed": settings.byok_allowed,
+        "default_mode": settings.default_answer_mode,
     }
 
 

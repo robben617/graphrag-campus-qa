@@ -36,6 +36,8 @@ def client(tmp_path):
         llm_api_key="",
         allow_server_llm_fallback=False,
         llm_config_test_interval=0,
+        # BYOK 入口只在自部署形态开放，这组用例验证的就是该形态下的行为
+        deploy_mode="selfhost",
     )
     Database(str(tmp_path / "kb.db")).init_schema()
     return TestClient(create_app(settings))

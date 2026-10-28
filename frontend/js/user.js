@@ -1,21 +1,34 @@
-// 身份组件：创建身份 / 粘贴已有 Token / 切换 / 退出。
+// 侧栏底部两块组件，职责严格分开：
 //
-// 此前前端只从 localStorage 读 user_token，却没有任何地方写入它，
-// 于是永远以「匿名用户」运行——多用户隔离、掌握标记、会话归属在界面上完全不可见。
+//   身份（#identity-box）：我是谁 —— 创建 / 粘贴 Token 切换 / 退出。
+//   设置（#settings-box）：用哪把模型 —— 只在自部署形态（SCHOOL_DEPLOY_MODE=selfhost）出现，
+//                          公开演示站点整块不渲染。
+//
+// 为什么拆开：把「填 API Key」混在「切换身份」里，等于让第一次访问的陌生人
+// 在还没弄清这是什么东西之前，先交出一把密钥。身份是入门动作，配置是进阶动作。
 //
 // 变更后派发 identity:changed 事件，各视图据此重新拉取自己那份数据。
 (function () {
   const ROLE_LABEL = { student: '学生', teacher: '老师', admin: '管理员' };
-  let panelOpen = false;
+  let identityOpen = false;
+  let settingsOpen = false;
 
-  function box() { return document.getElementById('identity-box'); }
+  function idBox() { return document.getElementById('identity-box'); }
+  function setBox() { return document.getElementById('settings-box'); }
 
   function dispatchChanged() {
+    // 部署策略里含「当前身份有没有可用 Key」，换人后必须重取，否则沿用上一个身份的结论
+    API.resetDeployInfo();
     window.dispatchEvent(new CustomEvent('identity:changed'));
   }
 
   async function refresh() {
-    const el = box();
+    await Promise.all([renderIdentity(), renderSettings()]);
+  }
+
+  // ---------- 身份 ----------
+  async function renderIdentity() {
+    const el = idBox();
     if (!el) return;
     const token = API.getToken();
     if (!token) {
@@ -23,8 +36,7 @@
         <div class="identity-card">
           <div class="muted" style="font-size:12px">当前：匿名访客</div>
           <button class="btn btn-mini" id="id-open">创建 / 切换身份</button>
-        </div>${panelOpen ? panelHtml('') : ''}`;
-      if (panelOpen) loadLlmPanel();
+        </div>${identityOpen ? identityPanel('') : ''}`;
       return;
     }
     try {
@@ -34,7 +46,7 @@
           <div class="identity-who"><b>${escapeHtml(me.username)}</b>
             <span class="badge">${escapeHtml(ROLE_LABEL[me.role] || me.role)}</span></div>
           <button class="btn btn-mini btn-ghost" id="id-open">切换身份</button>
-        </div>${panelOpen ? panelHtml(me.username) : ''}`;
+        </div>${identityOpen ? identityPanel(me.username) : ''}`;
     } catch (e) {
       // Token 失效
       API.clearToken();
@@ -42,12 +54,11 @@
         <div class="identity-card">
           <div class="muted" style="font-size:12px">身份已失效，请重新登录</div>
           <button class="btn btn-mini" id="id-open">创建 / 切换身份</button>
-        </div>${panelOpen ? panelHtml('') : ''}`;
+        </div>${identityOpen ? identityPanel('') : ''}`;
     }
-    if (panelOpen) loadLlmPanel();
   }
 
-  function panelHtml(defaultName) {
+  function identityPanel(defaultName) {
     return `
       <div class="identity-panel">
         <div class="muted" style="font-size:12px;margin-bottom:6px">新建身份</div>
@@ -63,7 +74,40 @@
         <textarea id="id-token" placeholder="粘贴你的 API Token" style="min-height:52px"></textarea>
         <button class="btn btn-mini btn-ghost" id="id-use" style="width:100%">使用此 Token</button>
 
-        <div class="muted" style="font-size:12px;margin:12px 0 6px">大模型 Key（可选，用自己的额度）</div>
+        ${API.getToken() ? '<button class="btn btn-mini btn-ghost" id="id-logout" style="width:100%;margin-top:10px">退出（回到匿名）</button>' : ''}
+        <div id="id-msg" class="muted" style="font-size:12px;margin-top:8px"></div>
+      </div>`;
+  }
+
+  // ---------- 模型设置（仅自部署形态） ----------
+  async function renderSettings() {
+    const el = setBox();
+    if (!el) return;
+    let info = null;
+    try {
+      info = await API.deployInfo();
+    } catch (e) {
+      info = null;
+    }
+    // 拿不到策略、或策略说未开放 → 不渲染入口。宁可少一个按钮，也不要吓跑访客。
+    if (!info || !info.byok_allowed) {
+      el.innerHTML = '';
+      settingsOpen = false;
+      return;
+    }
+    el.innerHTML = `
+      <div class="identity-card">
+        <button class="btn btn-mini btn-ghost" id="set-open">⚙ 模型设置</button>
+      </div>${settingsOpen ? settingsPanel() : ''}`;
+    if (settingsOpen) loadLlmPanel();
+  }
+
+  function settingsPanel() {
+    return `
+      <div class="identity-panel">
+        <div class="muted" style="font-size:11px;margin-bottom:6px;line-height:1.6">
+          自部署形态：可用自己的模型与额度。密钥加密后仅存本机数据库，只发往你填写的地址，可随时清除。
+        </div>
         <div id="llm-status" class="muted" style="font-size:11px;margin-bottom:6px;line-height:1.5"></div>
         <input id="llm-base" placeholder="Base URL，如 https://api.deepseek.com/v1" />
         <input id="llm-model" placeholder="模型，如 deepseek-chat" />
@@ -74,21 +118,16 @@
           <button class="btn btn-mini btn-ghost" id="llm-clear" style="flex:1">清除</button>
         </div>
         <div id="llm-msg" class="muted" style="font-size:12px;margin-top:6px"></div>
-
-        ${API.getToken() ? '<button class="btn btn-mini btn-ghost" id="id-logout" style="width:100%;margin-top:10px">退出（回到匿名）</button>' : ''}
-        <div id="id-msg" class="muted" style="font-size:12px;margin-top:8px"></div>
       </div>`;
   }
 
-  // ---------- 大模型 Key 配置 ----------
-  // 说明：配置按用户隔离，匿名访客没有 user_id 可挂，因此保存类操作必须先有身份。
   // 前端不缓存 key，任何时候都不把明文 key 写进 DOM 持久状态或 localStorage。
   function llmLabel(c) {
     if (c.source === 'user') {
       return `当前：个人 Key（${c.key_hint || '已保存'}，${c.model}）`;
     }
     if (c.source === 'server') {
-      return '当前：未配置个人 Key，使用服务器默认模型（正式上线后可能关闭）';
+      return '当前：未配置个人 Key，使用服务器默认模型';
     }
     return '当前：未配置 Key，回答会退化为「原文摘编」';
   }
@@ -128,6 +167,7 @@
     if (msg) msg.textContent = '保存中…';
     try {
       const c = await API.saveLLMConfig(llmPayload());
+      API.resetDeployInfo();
       const keyEl = document.getElementById('llm-key');
       if (keyEl) keyEl.value = '';
       if (msg) msg.textContent = '已保存。建议点「测试」验证一下能否连通。';
@@ -160,6 +200,7 @@
     if (!window.confirm('清除已保存的大模型 Key？清除后将回退到服务器默认配置或原文摘编。')) return;
     try {
       await API.deleteLLMConfig();
+      API.resetDeployInfo();
       ['llm-key', 'llm-base', 'llm-model'].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -172,6 +213,7 @@
     }
   }
 
+  // ---------- 身份操作 ----------
   async function createIdentity() {
     const name = (document.getElementById('id-name').value || '').trim();
     const role = document.getElementById('id-role').value;
@@ -181,7 +223,8 @@
     try {
       const r = await API.createUser(name, role);
       API.setToken(r.api_token);
-      panelOpen = false;
+      identityOpen = false;
+      API.resetDeployInfo(); // 换身份后「当前有没有可用 Key」会变，先作废旧结论再重取
       await refresh();
       dispatchChanged();
       window.alert(`身份已创建并切换。\n\n用户名：${r.username}\n角色：${ROLE_LABEL[r.role] || r.role}\nToken：${r.api_token}\n\n请自行保存该 Token —— 换了浏览器或清了缓存后，只能凭它登录。`);
@@ -209,7 +252,8 @@
         if (msg) msg.textContent = '该 Token 无法识别，请检查是否完整。';
         return;
       }
-      panelOpen = false;
+      identityOpen = false;
+      API.resetDeployInfo();
       await refresh();
       dispatchChanged();
     } catch (e) {
@@ -220,22 +264,41 @@
 
   function logout() {
     API.clearToken();
-    panelOpen = false;
+    identityOpen = false;
+    settingsOpen = false;
+    API.resetDeployInfo();
     refresh();
     dispatchChanged();
   }
 
   document.addEventListener('click', (e) => {
     const t = e.target;
-    if (t.id === 'id-open') { panelOpen = !panelOpen; refresh(); return; }
+    if (t.id === 'id-open') {
+      identityOpen = !identityOpen;
+      settingsOpen = false;
+      refresh();
+      return;
+    }
+    if (t.id === 'set-open') {
+      settingsOpen = !settingsOpen;
+      identityOpen = false;
+      refresh();
+      return;
+    }
     if (t.id === 'id-create') { createIdentity(); return; }
     if (t.id === 'id-use') { useToken(); return; }
     if (t.id === 'id-logout') { logout(); return; }
     if (t.id === 'llm-save') { saveLlm(); return; }
     if (t.id === 'llm-test') { testLlm(); return; }
     if (t.id === 'llm-clear') { clearLlm(); return; }
-    // 点击面板外部收起
-    if (panelOpen && !t.closest('#identity-box')) { panelOpen = false; refresh(); }
+    // 点击两个组件之外的位置 → 收起面板
+    const inIdentity = t.closest && t.closest('#identity-box');
+    const inSettings = t.closest && t.closest('#settings-box');
+    if ((identityOpen || settingsOpen) && !inIdentity && !inSettings) {
+      identityOpen = false;
+      settingsOpen = false;
+      refresh();
+    }
   });
 
   refresh();

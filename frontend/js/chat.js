@@ -4,6 +4,11 @@
   const view = document.getElementById('view-chat');
   let sessionId = null;
   let sending = false;
+  // 回答方式：extractive（原文摘编，零成本）/ llm（大模型增强）。
+  // 默认值由服务端按部署形态给出，用户手动切过后用 localStorage 记住。
+  let answerMode = 'extractive';
+  let modeKnown = false;
+  let lastQuestion = '';
 
   function render() {
     view.innerHTML = `
@@ -15,6 +20,14 @@
         </aside>
         <div class="chat-box">
           <div class="messages" id="chat-messages"></div>
+          <div class="mode-row" id="mode-row" style="display:none">
+            <span class="muted" style="font-size:12px">回答方式</span>
+            <div class="mode-seg">
+              <button class="mode-btn" data-mode="extractive">原文摘编</button>
+              <button class="mode-btn" data-mode="llm">大模型增强</button>
+            </div>
+            <span class="muted mode-tip" id="mode-tip"></span>
+          </div>
           <div class="chat-input-row">
             <textarea id="chat-input" placeholder="输入你的问题，如：奖学金申请需要什么条件？（Ctrl+Enter 发送）"></textarea>
             <button class="btn" id="chat-send">发送</button>
@@ -24,6 +37,63 @@
           </div>
         </div>
       </div>`;
+    loadModeInfo();
+  }
+
+  // ---------- 回答方式 ----------
+  // 只有确实有可用大模型时才显示切换器：给一个点下去也做不到的选项，比不给更糟。
+  async function loadModeInfo() {
+    const row = document.getElementById('mode-row');
+    if (!row) return;
+    let info = null;
+    try { info = await API.deployInfo(); } catch (e) { info = null; }
+    if (!info || !info.effective) {
+      answerMode = 'extractive';
+      row.style.display = 'none';
+      return;
+    }
+    if (!modeKnown) {
+      const saved = localStorage.getItem('answer_mode');
+      answerMode = (saved === 'llm' || saved === 'extractive')
+        ? saved
+        : (info.default_mode || 'extractive');
+      modeKnown = true;
+    }
+    row.style.display = 'flex';
+    paintMode();
+  }
+
+  function paintMode() {
+    document.querySelectorAll('#mode-row .mode-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.mode === answerMode);
+    });
+    const tip = document.getElementById('mode-tip');
+    if (tip) {
+      tip.textContent = answerMode === 'llm'
+        ? '大模型归纳成通顺回答，会消耗额度、响应更慢'
+        : '直接返回条款原文，零成本、不会改写措辞';
+    }
+  }
+
+  function setMode(mode) {
+    answerMode = mode;
+    modeKnown = true;
+    try { localStorage.setItem('answer_mode', mode); } catch (e) { /* 隐私模式忽略 */ }
+    paintMode();
+  }
+
+  // 摘编答案上的「改用大模型」：填回原问题并切模式，由用户自己按发送。
+  // 不自动重发，是为了不把同一条问题重复写进会话历史。
+  function enhanceLast() {
+    if (!lastQuestion) return;
+    setMode('llm');
+    const input = document.getElementById('chat-input');
+    if (input) {
+      input.value = lastQuestion;
+      input.focus();
+    }
+    const status = document.getElementById('chat-status');
+    if (status) status.textContent = '已切到大模型增强，按发送（或 Ctrl+Enter）再问一次';
   }
 
   function welcome() {
@@ -47,6 +117,9 @@
     if (extra && extra.degradation_notice) {
       html += `<div class="cite" style="border-color:var(--warn);background:#fffbeb">⚠ ${escapeHtml(extra.degradation_notice)}</div>`;
     }
+    if (extra && extra.mode_notice) {
+      html += `<div class="cite" style="border-color:#bfdbfe;background:#eff6ff">ℹ ${escapeHtml(extra.mode_notice)}</div>`;
+    }
     if (extra && extra.citations && extra.citations.length) {
       html += `<div class="cites"><div class="muted" style="font-size:12px;margin-bottom:4px">引用来源</div>` +
         extra.citations.map((c, i) => {
@@ -67,6 +140,10 @@
     }
     if (extra && extra.entities && extra.entities.length) {
       html += `<div class="muted" style="margin-top:6px;font-size:12px">相关实体：${escapeHtml(extra.entities.map(e => e.name).join('、'))}</div>`;
+    }
+    if (extra && extra.can_enhance) {
+      html += `<div class="enhance-hint">以上为条款原文摘编。
+        <a href="javascript:void(0)" data-enhance="1">改用大模型归纳一次</a></div>`;
     }
     div.innerHTML = html;
     box.appendChild(div);
@@ -157,17 +234,19 @@
     const q = (text !== undefined ? text : input.value).trim();
     if (!q) return;
     if (input) input.value = '';
+    lastQuestion = q;
     addMessage('user', q);
     const status = document.getElementById('chat-status');
     const btn = document.getElementById('chat-send');
     sending = true;
-    status.textContent = '检索中…'; if (btn) btn.disabled = true;
+    status.textContent = answerMode === 'llm' ? '检索并生成中…' : '检索中…';
+    if (btn) btn.disabled = true;
     try {
       if (!sessionId) {
         const s = await API.createSession();
         sessionId = s.session_id;
       }
-      const resp = await API.sessionAsk(sessionId, q);
+      const resp = await API.sessionAsk(sessionId, q, answerMode);
       if (resp.rewritten_question) {
         addMessage('assistant', `（理解：${resp.rewritten_question}）`, null);
       }
@@ -190,6 +269,10 @@
     if (item) { openSession(item.dataset.id); return; }
     const link = e.target.closest('[data-graph]');
     if (link) { window.App.switchView('graph'); window.dispatchEvent(new CustomEvent('graph:focus', { detail: link.dataset.graph })); return; }
+    const enhance = e.target.closest('[data-enhance]');
+    if (enhance) { enhanceLast(); return; }
+    const modeBtn = e.target.closest('#mode-row .mode-btn');
+    if (modeBtn) { setMode(modeBtn.dataset.mode); return; }
     if (e.target.id === 'chat-send') send();
     else if (e.target.id === 'session-new') newSession();
   });
@@ -197,10 +280,10 @@
     if (e.target.id === 'chat-input' && e.ctrlKey && e.key === 'Enter') send();
   });
 
-  // 切换用户后，会话归属变了，必须重新拉列表
+  // 切换用户后，会话归属变了，必须重新拉列表；可用模型也可能变了，重算切换器
   window.addEventListener('identity:changed', () => {
     sessionId = null;
-    if (document.getElementById('session-list')) { welcome(); loadSessions(); }
+    if (document.getElementById('session-list')) { welcome(); loadSessions(); loadModeInfo(); }
   });
 
   render();

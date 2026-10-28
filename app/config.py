@@ -96,6 +96,20 @@ def _llm_enabled() -> bool:
     return bool(_llm_api_key())
 
 
+def _deploy_mode() -> str:
+    """部署形态：public（对外开放演示） / selfhost（自部署、自用）。
+
+    默认 public，是本项目的价值判断而不是技术妥协：
+    一个陌生访客打开页面就被要求「粘贴你的 API Key」，和钓鱼页没有区别，
+    会直接劝退第一次访问的人。所以默认不采集用户密钥、默认走零成本的原文摘编；
+    真正要自带密钥的人，是那些把项目部署到自己机器上的用户，他们显式声明 selfhost 即可。
+    """
+    raw = (os.environ.get("SCHOOL_DEPLOY_MODE") or "public").strip().lower()
+    if raw in {"selfhost", "self-host", "self_hosted", "self-hosted", "private", "dev", "local"}:
+        return "selfhost"
+    return "public"
+
+
 def _embedding_key() -> str:
     return os.environ.get("EMBEDDING_API_KEY", "")
 
@@ -136,6 +150,18 @@ class Settings:
     llm_config_test_interval: int = field(
         default_factory=lambda: _env_int("LLM_CONFIG_TEST_INTERVAL", 5)
     )
+    # 部署形态：public（对外演示）/ selfhost（自部署、自用）。见 _deploy_mode 的说明。
+    deploy_mode: str = field(default_factory=_deploy_mode)
+    # 公开站点「大模型增强」的每日额度，防止陌生用户把部署方的 Key 费用刷爆。
+    # 取值 <= 0 表示不限（仅适合自部署）。
+    public_llm_daily_per_user: int = field(
+        default_factory=lambda: _env_int("PUBLIC_LLM_DAILY_PER_USER", 30)
+    )
+    public_llm_daily_total: int = field(
+        default_factory=lambda: _env_int("PUBLIC_LLM_DAILY_TOTAL", 300)
+    )
+    # 默认回答方式：auto（按部署形态推导）/ extractive（原文摘编）/ llm（大模型生成）
+    answer_mode: str = field(default_factory=lambda: os.environ.get("DEFAULT_ANSWER_MODE", "auto"))
     # Embedding（可选；未配置则用本地确定性向量器兜底）
     embedding_enabled: bool = field(default_factory=lambda: bool(_embedding_key()))
     embedding_base_url: str = field(default_factory=_embedding_base_url)
@@ -196,6 +222,28 @@ class Settings:
     @property
     def llm_configured(self) -> bool:
         return self.llm_enabled and bool(self.llm_api_key)
+
+    @property
+    def is_public(self) -> bool:
+        """对外开放演示：不采集用户密钥、默认零成本回答。"""
+        return self.deploy_mode != "selfhost"
+
+    @property
+    def byok_allowed(self) -> bool:
+        """是否允许用户在页面上配置自带密钥。
+
+        只在 selfhost 开放。能力本身（/api/v1/llm/config）始终保留：
+        自部署者需要它，面试官读代码也看得见；但公开站点不该把入口摆在陌生人面前。
+        """
+        return self.deploy_mode == "selfhost"
+
+    @property
+    def default_answer_mode(self) -> str:
+        """未显式指定时用哪种回答方式。"""
+        raw = (self.answer_mode or "auto").strip().lower()
+        if raw in {"llm", "extractive"}:
+            return raw
+        return "extractive" if self.is_public else "llm"
 
     @property
     def local_embedding_path(self) -> str:

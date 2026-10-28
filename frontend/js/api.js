@@ -110,6 +110,26 @@
     return data;
   }
 
+  // 部署策略（只读）。前端据此决定要不要渲染「模型设置」入口、默认用哪种回答方式。
+  // 请求失败时按最保守的「公开站点」处理：藏起密钥入口，绝不让页面因拿不到策略而异常。
+  let deployPromise = null;
+  function deployInfo() {
+    if (!deployPromise) {
+      deployPromise = request('GET', '/api/v1/llm/config').catch(() => ({
+        byok_allowed: false,
+        default_mode: 'extractive',
+        effective: false,
+        source: 'none',
+        deploy_mode: 'public',
+      }));
+    }
+    return deployPromise;
+  }
+
+  function resetDeployInfo() {
+    deployPromise = null;
+  }
+
   window.API = {
     get BASE() { return base; },
     // 身份
@@ -117,20 +137,22 @@
     me: () => request('GET', '/api/v1/me'),
     createUser: (username, role) => request('POST', '/api/v1/users', { username, role }),
     listUsers: () => request('GET', '/api/v1/users'),
-    // 大模型密钥（用户自带 Key）
+    // 部署策略 / 大模型密钥（用户自带 Key，仅自部署形态开放写入）
+    deployInfo, resetDeployInfo,
     llmConfig: () => request('GET', '/api/v1/llm/config'),
     saveLLMConfig: (payload) => request('PUT', '/api/v1/llm/config', payload),
     deleteLLMConfig: () => request('DELETE', '/api/v1/llm/config'),
     testLLMConfig: (payload) => request('POST', '/api/v1/llm/config/test', payload || {}),
-    // 问答
-    ask: (question) => request('POST', '/api/v1/ask', { question }),
+    // 问答：mode 省略时由服务端按部署形态决定（auto）
+    ask: (question, mode) => request('POST', '/api/v1/ask', mode ? { question, mode } : { question }),
     // 会话
     createSession: (title) => request('POST', '/api/v1/sessions', { title }),
     listSessions: () => request('GET', '/api/v1/sessions'),
     getSession: (id) => request('GET', `/api/v1/sessions/${id}`),
     deleteSession: (id) => request('DELETE', `/api/v1/sessions/${id}`),
     sessionMessages: (id) => request('GET', `/api/v1/sessions/${id}/messages`),
-    sessionAsk: (id, question) => request('POST', `/api/v1/sessions/${id}/ask`, { question }),
+    sessionAsk: (id, question, mode) =>
+      request('POST', `/api/v1/sessions/${id}/ask`, mode ? { question, mode } : { question }),
     // 图谱
     graphStats: () => request('GET', '/api/v1/graph/stats'),
     graphCategories: () => request('GET', '/api/v1/graph/categories'),

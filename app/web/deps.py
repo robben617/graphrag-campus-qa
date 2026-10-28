@@ -79,6 +79,19 @@ def get_current_user(request: Request, db: Database = Depends(get_db)) -> dict:
     return users_mod.resolve_user(db, token)
 
 
+def disabled_llm(settings: Settings) -> LLMClient:
+    """一个「不可用」的客户端：调用必然降级为原文摘编。
+
+    用于两种场景：本次请求按策略不该花钱（摘编模式），
+    以及额度已用完——把 client.available 置为 False 后，
+    多轮改写与生成都会自动走零成本的降级分支，不需要各处再判断开关。
+    """
+    return LLMClient(
+        settings,
+        LLMConfig(base_url="", api_key="", model="", timeout=settings.llm_timeout),
+    )
+
+
 def get_llm_for_user(request: Request, user: dict = Depends(get_current_user)) -> LLMClient:
     """解析本次请求该用哪把大模型密钥。
 
@@ -99,10 +112,7 @@ def get_llm_for_user(request: Request, user: dict = Depends(get_current_user)) -
         return cfg.to_client(settings)
     if settings.allow_server_llm_fallback:
         return LLMClient(settings)
-    return LLMClient(
-        settings,
-        LLMConfig(base_url="", api_key="", model="", timeout=settings.llm_timeout),
-    )
+    return disabled_llm(settings)
 
 
 def require_roles(*roles: str):

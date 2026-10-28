@@ -185,6 +185,18 @@ CREATE TABLE IF NOT EXISTS user_llm_configs (
     created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- ============ 第五阶段：公开部署的大模型每日额度 ============
+-- 只记「次数」，不记问题内容，不关联任何个人信息（subject 是随机 user_id 或固定 'all'）。
+-- 按天分区（day = 本地日期字符串），跨天自然归零，无需定时任务清理。
+CREATE TABLE IF NOT EXISTS llm_usage (
+    day         TEXT NOT NULL,              -- YYYY-MM-DD（服务器本地时间）
+    scope       TEXT NOT NULL,              -- global | user
+    subject     TEXT NOT NULL,              -- scope=global 时为 'all'；否则为 user_id
+    count       INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    PRIMARY KEY (day, scope, subject)
+);
 """
 
 

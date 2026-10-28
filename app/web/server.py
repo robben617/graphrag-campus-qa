@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -58,6 +59,7 @@ from ..service import evaluation as eval_mod
 from ..service import graph as graph_mod
 from ..service import ingestion as ingest_mod
 from ..service import llm_config as llm_cfg_mod
+from ..service import llm_quota as quota_mod
 from ..service import mastery as mastery_mod
 from ..service import paths as paths_mod
 from ..service import quiz as quiz_mod
@@ -75,10 +77,15 @@ logger = logging.getLogger("school_agent.web")
 class AskRequest(BaseModel):
     question: str = Field(..., description="提问内容")
     # 校验交给 QAService，避免 pydantic 422 与统一 400 错误不一致
+    mode: str = Field(
+        "auto",
+        description="回答方式：auto（按部署形态）/ extractive（原文摘编，零成本）/ llm（大模型生成）",
+    )
 
 
 class SessionAskRequest(BaseModel):
     question: str = Field(..., description="追问内容")
+    mode: str = Field("auto", description="回答方式：auto / extractive / llm")
 
 
 class SessionCreateRequest(BaseModel):
@@ -121,6 +128,77 @@ class LLMConfigRequest(BaseModel):
     base_url: str = Field("", description="OpenAI 兼容地址，如 https://api.deepseek.com/v1")
     model: str = Field("", description="模型名，如 deepseek-chat")
     enabled: bool = Field(True, description="是否启用该配置")
+
+
+_ANSWER_MODES = {"auto", "extractive", "llm"}
+
+
+def resolve_answer_mode(requested: Optional[str], settings: Settings) -> str:
+    """把请求里的 mode 解析成最终要执行的方式。
+
+    auto 交给部署形态决定：public 默认 extractive（零成本），selfhost 默认 llm。
+    """
+    mode = (requested or "auto").strip().lower()
+    if mode not in _ANSWER_MODES:
+        raise UserInputError("回答方式（mode）只能是 auto / extractive / llm")
+    if mode == "auto":
+        return settings.default_answer_mode
+    return mode
+
+
+@dataclass
+class AnswerPlan:
+    """本次请求的执行计划：用哪个客户端、要不要生成、能不能引导「增强」。"""
+
+    llm: LLMClient
+    generate: bool
+    notice: Optional[str] = None
+    enhance: bool = False
+
+
+def plan_answer(
+    settings: Settings,
+    db: Database,
+    user_id: str,
+    llm: LLMClient,
+    requested_mode: Optional[str],
+) -> AnswerPlan:
+    """决定这次到底要不要花钱调大模型。
+
+    三道闸门按顺序生效，任一道不过就退回零成本的原文摘编——
+    摘编对用户仍是完整可用的答案，因此这道"拒绝"不是错误，而是降级：
+    1. 用户选的方式（auto 时按部署形态推导）；
+    2. 是否真的存在可用密钥；
+    3. 公开部署下还有没有每日额度（只在服务器出钱时才计）。
+    """
+    mode = resolve_answer_mode(requested_mode, settings)
+
+    if mode != "llm":
+        # 摘编模式：换掉客户端而不是加一个 if，这样多轮改写也会自动走零成本分支
+        return AnswerPlan(deps.disabled_llm(settings), False, None, llm.available)
+
+    if not llm.available:
+        return AnswerPlan(
+            deps.disabled_llm(settings),
+            False,
+            "当前没有可用的大模型密钥，已返回知识库原文摘编。",
+            False,
+        )
+
+    if settings.is_public:
+        # 匿名访客共用一个 user_id，若按人计额会把全站几十个人压到同一份额度里；
+        # 匿名只受全站额度约束，登录身份才单独计人。
+        per_user = 0 if user_id == users_mod.DEFAULT_USER else settings.public_llm_daily_per_user
+        verdict = quota_mod.consume(
+            db,
+            user_id=user_id,
+            per_user_limit=per_user,
+            total_limit=settings.public_llm_daily_total,
+        )
+        if not verdict.allowed:
+            return AnswerPlan(deps.disabled_llm(settings), False, verdict.message, False)
+
+    return AnswerPlan(llm, True, None, False)
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -210,13 +288,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         user: dict = Depends(deps.get_current_user),
         qa: QAService = Depends(deps.get_qa),
         llm: LLMClient = Depends(deps.get_llm_for_user),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
     ):
         start = time.perf_counter()
-        ans = qa.ask(req.question, llm=llm)
+        plan = plan_answer(settings, db, user["user_id"], llm, req.mode)
+        ans = qa.ask(
+            req.question,
+            llm=plan.llm,
+            generate=plan.generate,
+            extractive_notice=plan.notice,
+            enhance_allowed=plan.enhance,
+        )
         elapsed = int((time.perf_counter() - start) * 1000)
         log_event(
             logger, "ask", request_id=request.state.request_id,
             elapsed_ms=elapsed, mode=ans.mode, hits=len(ans.citations), degraded=ans.degraded,
+            generated=plan.generate,
         )
         return {**ans.to_dict(), "request_id": request.state.request_id, "elapsed_ms": elapsed}
 
@@ -272,13 +360,23 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         conv: ConversationService = Depends(deps.get_conv),
         qa: QAService = Depends(deps.get_qa),
         llm: LLMClient = Depends(deps.get_llm_for_user),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
     ):
         start = time.perf_counter()
         conv.get(session_id, user_id=user["user_id"])  # 校验存在
         history = conv.history(session_id)
-        # 指代追问改写
-        rewritten = conv.rewrite_question(req.question, history, llm=llm)
-        ans = qa.ask(rewritten, history=history, llm=llm)
+        plan = plan_answer(settings, db, user["user_id"], llm, req.mode)
+        # 指代追问改写：摘编模式下 plan.llm 是不可用客户端，会自动走零成本启发式
+        rewritten = conv.rewrite_question(req.question, history, llm=plan.llm)
+        ans = qa.ask(
+            rewritten,
+            history=history,
+            llm=plan.llm,
+            generate=plan.generate,
+            extractive_notice=plan.notice,
+            enhance_allowed=plan.enhance,
+        )
         # 记录消息（citations 转 dict 以便 JSON 持久化）
         conv.add_message(session_id, "user", req.question)
         conv.add_message(session_id, "assistant", ans.answer, citations=[c.to_dict() for c in ans.citations])
@@ -286,7 +384,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         log_event(
             logger, "session_ask", request_id=request.state.request_id,
             session_id=session_id, elapsed_ms=elapsed, mode=ans.mode,
-            hits=len(ans.citations), degraded=ans.degraded,
+            hits=len(ans.citations), degraded=ans.degraded, generated=plan.generate,
         )
         return {
             **ans.to_dict(),
@@ -469,6 +567,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             )
         return user
 
+    def _require_byok_enabled(settings: Settings) -> None:
+        """公开部署下不采集用户密钥。
+
+        能力没有删除（自部署者仍需要），只是对外站点关闭写入口：
+        让陌生访客在别人的站点上粘贴自己的 Key，无论加密做得多好，
+        都是在要求用户先付出信任，而这一步通常直接把人劝走。
+        """
+        if not settings.byok_allowed:
+            raise ForbiddenError(
+                "当前为公开演示站点，未开放「自带密钥」。直接提问即可；"
+                "如需使用自己的模型，请把项目部署到你自己的机器上（SCHOOL_DEPLOY_MODE=selfhost）。",
+                detail="byok_disabled",
+            )
+
     @app.get("/api/v1/llm/config")
     def get_llm_config(
         user: dict = Depends(deps.get_current_user),
@@ -491,6 +603,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         settings: Settings = Depends(deps.get_app_settings),
         box: SecretBox = Depends(deps.get_secret_box),
     ):
+        _require_byok_enabled(settings)
         _require_identity(user)
         cfg = llm_cfg_mod.save_config(
             db, box, settings, user["user_id"],
@@ -509,7 +622,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def delete_llm_config(
         user: dict = Depends(deps.get_current_user),
         db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
     ):
+        _require_byok_enabled(settings)
         _require_identity(user)
         removed = llm_cfg_mod.delete_config(db, user["user_id"])
         log_event(logger, "llm_config_deleted", user_id=user["user_id"], removed=removed)
@@ -524,6 +639,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         box: SecretBox = Depends(deps.get_secret_box),
     ):
         """测试连通性：可带未保存的临时 key 试，也可以测已保存的那份。"""
+        _require_byok_enabled(settings)
         _require_identity(user)
         if req.api_key.strip():
             cfg = llm_cfg_mod.build_transient_config(
@@ -585,6 +701,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {
             "status": status,
             "version": __version__,
+            "deploy_mode": settings.deploy_mode,
+            "byok_allowed": settings.byok_allowed,
+            "default_answer_mode": settings.default_answer_mode,
             "llm_configured": settings.llm_configured,
             "llm_model": settings.llm_model,
             "embedding_configured": settings.embedding_enabled and bool(settings.embedding_api_key),
