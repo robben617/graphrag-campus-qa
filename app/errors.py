@@ -100,6 +100,16 @@ class NotFoundError(AppError):
         super().__init__(message, detail=detail)
 
 
+class RateLimitedError(AppError):
+    """请求过于频繁（连通性测试这类会打到外部服务的接口）。"""
+
+    http_status = 429
+    code = "RATE_LIMITED"
+
+    def __init__(self, message: str = "请求过于频繁，请稍后再试", *, detail: Optional[str] = None):
+        super().__init__(message, detail=detail)
+
+
 class LLMUnavailable(AppError):
     """LLM 调用失败：由服务层捕获并降级为原文摘编，不向用户暴露为错误。"""
 

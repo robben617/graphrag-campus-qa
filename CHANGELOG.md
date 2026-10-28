@@ -4,6 +4,27 @@
 > 因此 **v0.1.0 / v0.2.0 不单独打 tag**（会指向同一提交、失去意义）；自 **v0.3.0** 起按里程碑打 tag。
 > 三个阶段的完整设计说明见 `docs/`（索引：`docs/README.md`）。
 
+## [v0.4.0] — 2026-10-28 — 用户自带大模型密钥（BYOK）
+
+### 新增
+- 用户可配置自己的 `api_key` / `base_url` / `model`，保存后立即对本人生效，无需重启
+- 接口：`GET/PUT/DELETE /api/v1/llm/config`、`POST /api/v1/llm/config/test`（保存前可先测连通性）
+- 密钥 **Fernet 加密落库**（`user_llm_configs.api_key_enc`），接口只返回 `sk-…9876` 形式的掩码
+- 前端身份面板新增「大模型 Key」配置区：保存 / 测试 / 清除 + 当前来源提示
+- `LLMClient` 支持外部配置注入，`QAService` 与 `ConversationService` 可按请求切换模型客户端
+- 新增 `docs/第四阶段-用户自带密钥设计.md`：数据模型、降级矩阵、错误矩阵、威胁模型、部署与回滚
+
+### 变更
+- 配置按用户隔离；匿名身份调用写接口返回 403，避免"看似保存成功实际丢弃"
+- `base_url` 增加校验：仅允许 http(s)，禁止本机/内网地址（SSRF），自动裁掉误粘的 `/chat/completions`
+- 连通性测试按用户限频（默认 5 秒），防止被当作探测跳板
+- 新增依赖 `cryptography>=42`
+- 测试口径：67 项（66 通过 + 1 跳过）→ **77 项（76 通过 + 1 跳过）**
+
+### 部署要求
+- 设置 `LLM_CONFIG_SECRET`（不设则自动生成 `data/.llm_secret`，仅适合本地）
+- 对外推广时设置 `ALLOW_SERVER_LLM_FALLBACK=false`，避免共用运营方额度
+
 ## [v0.3.0] — 2026-10-14 — 第三阶段：产品化（P2）+ 仓库展示层
 
 ### 新增

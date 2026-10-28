@@ -14,6 +14,8 @@ jieba>=0.42
 # ============ LLM / Embedding API（可选，默认关闭）============
 # 仅配置 API Key 后启用；不配置则走降级模式（原文摘编 / 哈希向量器）
 requests>=2.31
+# 用户自带密钥的落库加密（Fernet：AES-128-CBC + HMAC-SHA256）
+cryptography>=42
 
 # ============ 测试 ============
 pytest>=8.0

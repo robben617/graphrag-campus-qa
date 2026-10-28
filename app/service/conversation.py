@@ -160,16 +160,22 @@ class ConversationService:
                     (title, session_id),
                 )
 
-    def rewrite_question(self, question: str, history: List[dict]) -> str:
-        """把含指代的追问重写为自包含问题（LLM 优先，失败降级）。"""
+    def rewrite_question(
+        self, question: str, history: List[dict], llm: Optional[LLMClient] = None
+    ) -> str:
+        """把含指代的追问重写为自包含问题（LLM 优先，失败降级）。
+
+        llm 允许按请求注入用户自带的客户端；不传则用服务器默认配置。
+        """
+        client = llm or self.llm
         # 无历史或无指代迹象则原样返回
         if not history or not any(h in question for h in _REFERENCE_HINTS):
             return question
         last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), None)
         # 降级启发式：拼接上一轮用户问题
-        if not self.llm.available:
+        if not client.available:
             return f"{last_user}；{question}" if last_user else question
         try:
-            return self.llm.rewrite(question, history)
+            return client.rewrite(question, history)
         except Exception:  # noqa: BLE001
             return f"{last_user}；{question}" if last_user else question

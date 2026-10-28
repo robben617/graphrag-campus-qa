@@ -119,6 +119,23 @@ class Settings:
     llm_api_key: str = field(default_factory=_llm_api_key)
     llm_model: str = field(default_factory=_llm_model)
     llm_timeout: int = field(default_factory=lambda: _env_int("LLM_TIMEOUT", 60))
+    # 用户自带密钥（BYOK）
+    # llm_config_secret：加密用户密钥用的主密钥；为空则退回 data/.llm_secret（仅限本地）
+    llm_config_secret: str = field(
+        default_factory=lambda: os.environ.get("LLM_CONFIG_SECRET", "")
+    )
+    # 用户没配自己的 key 时，是否允许借用服务器这把 key（运营方付费）
+    allow_server_llm_fallback: bool = field(
+        default_factory=lambda: _env_bool("ALLOW_SERVER_LLM_FALLBACK", True)
+    )
+    # 用户填的 base_url 是否允许指向内网/本机（默认禁止，防 SSRF）
+    allow_private_llm_base_url: bool = field(
+        default_factory=lambda: _env_bool("ALLOW_PRIVATE_LLM_BASE_URL", False)
+    )
+    # 连通性测试的最小间隔（秒），防止把服务当探测跳板刷接口
+    llm_config_test_interval: int = field(
+        default_factory=lambda: _env_int("LLM_CONFIG_TEST_INTERVAL", 5)
+    )
     # Embedding（可选；未配置则用本地确定性向量器兜底）
     embedding_enabled: bool = field(default_factory=lambda: bool(_embedding_key()))
     embedding_base_url: str = field(default_factory=_embedding_base_url)

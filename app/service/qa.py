@@ -127,8 +127,15 @@ class QAService:
             degradation_notice=degradation_notice,
         )
 
-    def ask(self, question: Optional[str], history: Optional[List[dict]] = None) -> QAAnswer:
+    def ask(
+        self,
+        question: Optional[str],
+        history: Optional[List[dict]] = None,
+        llm: Optional[LLMClient] = None,
+    ) -> QAAnswer:
+        """llm 用于按请求注入「用户自带的模型客户端」；不传则使用服务器默认配置。"""
         q = self._validate(question)
+        client = llm or self.llm
 
         try:
             if self.db.is_empty():
@@ -183,7 +190,7 @@ class QAService:
             {"doc_title": h.doc_title, "chapter": h.chapter, "article_no": h.article_no, "content": h.content}
             for h in hits
         ]
-        answer_text, mode, degraded = self._generate(q, evidence, hits)
+        answer_text, mode, degraded = self._generate(q, evidence, hits, client)
 
         # 掌握标记提示：未掌握的相关知识点追加提示
         answer_text = self._append_mastery_hint(answer_text, entities)
@@ -218,9 +225,10 @@ class QAService:
             degradation_notice=degradation_notice,
         )
 
-    def _generate(self, q, evidence, hits):
+    def _generate(self, q, evidence, hits, llm: Optional[LLMClient] = None):
+        client = llm or self.llm
         try:
-            answer_text = self.llm.generate(q, evidence)
+            answer_text = client.generate(q, evidence)
             return answer_text, "大模型生成", False
         except Exception:  # noqa: BLE001 - 任意异常都降级
             return self._extract_answer(q, hits), "混合检索", True

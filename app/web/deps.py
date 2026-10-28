@@ -25,10 +25,13 @@ from __future__ import annotations
 from fastapi import Depends, Request
 
 from ..config import Settings
+from ..crypto import SecretBox
 from ..db import Database
 from ..embeddings import BaseEmbedder
+from ..service import llm_config as llm_config_mod
 from ..service import users as users_mod
 from ..service.conversation import ConversationService
+from ..service.llm import LLMClient, LLMConfig
 from ..service.qa import QAService
 
 # ============ 应用级依赖：从 app.state 取全局复用实例 ============
@@ -59,6 +62,11 @@ def get_embedder(request: Request) -> BaseEmbedder:
     return request.app.state.embedder
 
 
+def get_secret_box(request: Request) -> SecretBox:
+    """用户密钥的加解密器（主密钥在应用启动时确定，全局复用）。"""
+    return request.app.state.secret_box
+
+
 # ============ 请求级依赖：身份与权限 ============
 
 
@@ -69,6 +77,32 @@ def get_current_user(request: Request, db: Database = Depends(get_db)) -> dict:
     """
     token = request.headers.get("X-User-Token")
     return users_mod.resolve_user(db, token)
+
+
+def get_llm_for_user(request: Request, user: dict = Depends(get_current_user)) -> LLMClient:
+    """解析本次请求该用哪把大模型密钥。
+
+    优先级：
+    1. 用户自己配置且启用 → 用用户的（费用与额度由用户承担）；
+    2. 允许服务器兜底 → 用服务器默认配置（运营方付费，生产环境应关掉）；
+    3. 都没有 → 返回一个不可用的客户端，QA 层自动降级为原文摘编。
+
+    这里不做缓存：SQLite 单行读取 + Fernet 解密都在微秒级，
+    而缓存会引入"用户改了 key 却还在用旧 key"的一致性问题，不划算。
+    """
+    settings: Settings = request.app.state.settings
+    db: Database = request.app.state.db
+    box: SecretBox = request.app.state.secret_box
+
+    cfg = llm_config_mod.load_config(db, box, user["user_id"])
+    if cfg and cfg.enabled and cfg.api_key:
+        return cfg.to_client(settings)
+    if settings.allow_server_llm_fallback:
+        return LLMClient(settings)
+    return LLMClient(
+        settings,
+        LLMConfig(base_url="", api_key="", model="", timeout=settings.llm_timeout),
+    )
 
 
 def require_roles(*roles: str):

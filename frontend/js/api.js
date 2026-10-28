@@ -117,6 +117,11 @@
     me: () => request('GET', '/api/v1/me'),
     createUser: (username, role) => request('POST', '/api/v1/users', { username, role }),
     listUsers: () => request('GET', '/api/v1/users'),
+    // 大模型密钥（用户自带 Key）
+    llmConfig: () => request('GET', '/api/v1/llm/config'),
+    saveLLMConfig: (payload) => request('PUT', '/api/v1/llm/config', payload),
+    deleteLLMConfig: () => request('DELETE', '/api/v1/llm/config'),
+    testLLMConfig: (payload) => request('POST', '/api/v1/llm/config/test', payload || {}),
     // 问答
     ask: (question) => request('POST', '/api/v1/ask', { question }),
     // 会话

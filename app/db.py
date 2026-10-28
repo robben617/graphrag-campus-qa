@@ -171,6 +171,20 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
     total       INTEGER,
     report_json TEXT NOT NULL DEFAULT '{}'
 );
+
+-- ============ 第四阶段：用户自带大模型密钥（BYOK）============
+-- api_key_enc 存的是 Fernet 密文，明文永不落库、永不返回给前端。
+-- key_hint 只保存末 4 位，用于界面显示「哪一把 key」，不足以还原密钥。
+CREATE TABLE IF NOT EXISTS user_llm_configs (
+    user_id     TEXT PRIMARY KEY,
+    base_url    TEXT NOT NULL DEFAULT '',
+    model       TEXT NOT NULL DEFAULT '',
+    api_key_enc TEXT NOT NULL DEFAULT '',
+    key_hint    TEXT NOT NULL DEFAULT '',
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
 """
 
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Query, Request
@@ -48,19 +49,22 @@ from pydantic import BaseModel, Field
 
 from .. import __version__
 from ..config import Settings
+from ..crypto import SecretBox, build_secret_box
 from ..db import Database
 from ..embeddings import BaseEmbedder, get_embedder
-from ..errors import AppError, InternalError, StorageUnavailable
+from ..errors import AppError, ForbiddenError, InternalError, StorageUnavailable, UserInputError
 from ..logging_util import log_event, setup_logging
 from ..service import evaluation as eval_mod
 from ..service import graph as graph_mod
 from ..service import ingestion as ingest_mod
+from ..service import llm_config as llm_cfg_mod
 from ..service import mastery as mastery_mod
 from ..service import paths as paths_mod
 from ..service import quiz as quiz_mod
 from ..service import users as users_mod
 from ..service import versioning as version_mod
 from ..service.conversation import ConversationService
+from ..service.llm import LLMClient
 from ..service.qa import QAService
 from . import deps
 from .dify import router as dify_router
@@ -106,6 +110,19 @@ class UserCreateRequest(BaseModel):
     role: str = Field("student", description="student | teacher | admin")
 
 
+class LLMConfigRequest(BaseModel):
+    """用户自带大模型配置。
+
+    api_key 留空表示沿用已保存的 key（便于只改模型或地址）；
+    base_url / model 留空则使用服务端默认值。
+    """
+
+    api_key: str = Field("", description="大模型 API Key（明文仅本请求体内传输）")
+    base_url: str = Field("", description="OpenAI 兼容地址，如 https://api.deepseek.com/v1")
+    model: str = Field("", description="模型名，如 deepseek-chat")
+    enabled: bool = Field(True, description="是否启用该配置")
+
+
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or Settings()
     setup_logging(settings.log_level)
@@ -130,6 +147,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     db.init_schema()
     app.state.settings = settings
     app.state.db = db
+    # 用户密钥的加解密器：主密钥来自 LLM_CONFIG_SECRET，缺省时落 data/.llm_secret
+    app.state.secret_box = build_secret_box(
+        settings.llm_config_secret, secret_dir=str(Path(settings.db_path).parent)
+    )
     app.state.qa = QAService(db, settings)
     app.state.conv = ConversationService(db, settings)
     app.state.embedder = get_embedder(settings)
@@ -186,10 +207,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def ask(
         req: AskRequest,
         request: Request,
+        user: dict = Depends(deps.get_current_user),
         qa: QAService = Depends(deps.get_qa),
+        llm: LLMClient = Depends(deps.get_llm_for_user),
     ):
         start = time.perf_counter()
-        ans = qa.ask(req.question)
+        ans = qa.ask(req.question, llm=llm)
         elapsed = int((time.perf_counter() - start) * 1000)
         log_event(
             logger, "ask", request_id=request.state.request_id,
@@ -248,13 +271,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         user: dict = Depends(deps.get_current_user),
         conv: ConversationService = Depends(deps.get_conv),
         qa: QAService = Depends(deps.get_qa),
+        llm: LLMClient = Depends(deps.get_llm_for_user),
     ):
         start = time.perf_counter()
         conv.get(session_id, user_id=user["user_id"])  # 校验存在
         history = conv.history(session_id)
         # 指代追问改写
-        rewritten = conv.rewrite_question(req.question, history)
-        ans = qa.ask(rewritten, history=history)
+        rewritten = conv.rewrite_question(req.question, history, llm=llm)
+        ans = qa.ask(rewritten, history=history, llm=llm)
         # 记录消息（citations 转 dict 以便 JSON 持久化）
         conv.add_message(session_id, "user", req.question)
         conv.add_message(session_id, "assistant", ans.answer, citations=[c.to_dict() for c in ans.citations])
@@ -434,6 +458,87 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/v1/me")
     def whoami(user: dict = Depends(deps.get_current_user)):
         return user
+
+    # ---------- 大模型密钥（用户自带 Key，BYOK） ----------
+    def _require_identity(user: dict) -> dict:
+        """配置按用户隔离，匿名身份无处可存，直接拒绝而不是静默丢弃。"""
+        if user["user_id"] == users_mod.DEFAULT_USER:
+            raise ForbiddenError(
+                "请先创建或登录身份，再配置大模型 Key",
+                detail="anonymous",
+            )
+        return user
+
+    @app.get("/api/v1/llm/config")
+    def get_llm_config(
+        user: dict = Depends(deps.get_current_user),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
+        box: SecretBox = Depends(deps.get_secret_box),
+    ):
+        cfg = None
+        if user["user_id"] != users_mod.DEFAULT_USER:
+            cfg = llm_cfg_mod.load_config(db, box, user["user_id"])
+        return llm_cfg_mod.public_view(
+            settings, cfg, server_available=settings.llm_configured
+        )
+
+    @app.put("/api/v1/llm/config")
+    def put_llm_config(
+        req: LLMConfigRequest,
+        user: dict = Depends(deps.get_current_user),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
+        box: SecretBox = Depends(deps.get_secret_box),
+    ):
+        _require_identity(user)
+        cfg = llm_cfg_mod.save_config(
+            db, box, settings, user["user_id"],
+            api_key=req.api_key, base_url=req.base_url, model=req.model, enabled=req.enabled,
+        )
+        # 日志只记 hint（首尾各几位），绝不写明文 key
+        log_event(
+            logger, "llm_config_saved", user_id=user["user_id"],
+            base_url=cfg.base_url, model=cfg.model, key_hint=cfg.hint, enabled=cfg.enabled,
+        )
+        return llm_cfg_mod.public_view(
+            settings, cfg, server_available=settings.llm_configured
+        )
+
+    @app.delete("/api/v1/llm/config")
+    def delete_llm_config(
+        user: dict = Depends(deps.get_current_user),
+        db: Database = Depends(deps.get_db),
+    ):
+        _require_identity(user)
+        removed = llm_cfg_mod.delete_config(db, user["user_id"])
+        log_event(logger, "llm_config_deleted", user_id=user["user_id"], removed=removed)
+        return {"deleted": removed}
+
+    @app.post("/api/v1/llm/config/test")
+    def test_llm_config(
+        req: LLMConfigRequest,
+        user: dict = Depends(deps.get_current_user),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
+        box: SecretBox = Depends(deps.get_secret_box),
+    ):
+        """测试连通性：可带未保存的临时 key 试，也可以测已保存的那份。"""
+        _require_identity(user)
+        if req.api_key.strip():
+            cfg = llm_cfg_mod.build_transient_config(
+                settings, api_key=req.api_key, base_url=req.base_url, model=req.model
+            )
+        else:
+            cfg = llm_cfg_mod.load_config(db, box, user["user_id"])
+            if not cfg or not cfg.api_key:
+                raise UserInputError("请先填写 API Key，或先保存配置再测试")
+        result = llm_cfg_mod.probe(settings, cfg, user_id=user["user_id"])
+        log_event(
+            logger, "llm_config_tested", user_id=user["user_id"],
+            ok=result["ok"], latency_ms=result["latency_ms"], model=result["model"],
+        )
+        return result
 
     # ---------- 增量入库（老师维护端） ----------
     @app.post("/api/v1/ingest/notice")
