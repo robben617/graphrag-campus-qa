@@ -140,6 +140,11 @@ CREATE TABLE IF NOT EXISTS vector_index (
 );
 CREATE INDEX IF NOT EXISTS idx_vector_doc ON vector_index(doc_id);
 
+CREATE TABLE IF NOT EXISTS vector_index_meta (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    model_key TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mastery (
     item_id     TEXT NOT NULL,             -- 实体 eid 或条款 clause:{id}
     user_id     TEXT NOT NULL DEFAULT 'anonymous',

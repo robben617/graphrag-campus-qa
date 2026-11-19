@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 from ..db import Database
@@ -41,49 +41,41 @@ class VectorResult:
     hits: List[VectorHit]
 
 
-def _current_dim(db: Database) -> int:
-    """返回向量表中现有向量的维度；无向量返回 0。"""
-    with db.session() as conn:
-        row = conn.execute("SELECT dim FROM vector_index LIMIT 1").fetchone()
-    return int(row["dim"]) if row else 0
-
-
 def ensure_vector_index(db: Database, embedder: BaseEmbedder) -> int:
-    """为尚无向量的条款补齐向量（幂等）。返回本次新增数量。
-
-    维度一致性：若向量表已有维度与当前 embedder 维度不一致（如从哈希向量器
-    切换为本地 BGE），则清空重建，避免余弦相似度因维度不匹配而恒为 0。
-    """
-    added = 0
-    existing_dim = _current_dim(db)
-
+    """为当前模型补齐缺失向量。模型切换时在同一事务中重建索引。"""
+    model_key = embedder.index_key
     with db.session() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        meta = conn.execute("SELECT model_key FROM vector_index_meta WHERE id = 1").fetchone()
+        if meta is None or meta["model_key"] != model_key:
+            conn.execute("DELETE FROM vector_index")
+            conn.execute("INSERT OR REPLACE INTO vector_index_meta (id, model_key) VALUES (1, ?)", (model_key,))
+
+        existing = conn.execute("SELECT dim FROM vector_index LIMIT 1").fetchone()
+        dimension = existing["dim"] if existing else 0
         rows = conn.execute(
             """
-            SELECT c.id, c.doc_id, c.chapter, c.article_no, c.content
+            SELECT c.id, c.doc_id, c.content
             FROM clauses c
             LEFT JOIN vector_index v ON v.clause_id = c.id
             WHERE v.clause_id IS NULL
+            ORDER BY c.id
             """
         ).fetchall()
-        # 维度不匹配 → 全量重建
-        need_rebuild = existing_dim not in (0, None) and (
-            (embedder.dim == 0) or (existing_dim != embedder.dim)
-        )
-        if need_rebuild:
-            conn.execute("DELETE FROM vector_index")
-            rows = conn.execute(
-                "SELECT c.id, c.doc_id, c.chapter, c.article_no, c.content FROM clauses c"
-            ).fetchall()
-        for row in rows:
-            vec = embedder.embed(row["content"])
-            dim = len(vec)
-            conn.execute(
-                "INSERT OR REPLACE INTO vector_index (clause_id, doc_id, dim, vector) VALUES (?,?,?,?)",
-                (row["id"], row["doc_id"], dim, json.dumps(vec, ensure_ascii=False)),
+        batch_size = embedder.index_batch_size
+        for start in range(0, len(rows), batch_size):
+            batch = rows[start:start + batch_size]
+            vectors = embedder.embed_batch([row["content"] for row in batch])
+            if len(vectors) != len(batch):
+                raise RuntimeError("向量数量与待索引条款数量不一致。")
+            dimension = dimension or len(vectors[0])
+            if not dimension or any(len(vec) != dimension for vec in vectors):
+                raise RuntimeError("向量维度不一致，请确认 Embedding 模型配置。")
+            conn.executemany(
+                "INSERT INTO vector_index (clause_id, doc_id, dim, vector) VALUES (?,?,?,?)",
+                [(row["id"], row["doc_id"], dimension, json.dumps(vec)) for row, vec in zip(batch, vectors)],
             )
-            added += 1
-    return added
+    return len(rows)
 
 
 def vector_count(db: Database) -> int:
@@ -101,12 +93,15 @@ def search_vector(
     """对条款向量做余弦相似度检索，返回 Top-K。active_doc_ids 用于时效过滤。"""
     if active_doc_ids is not None and not active_doc_ids:
         return []
-    qvec = embedder.embed(query)
     hits: List[VectorHit] = []
     with db.session() as conn:
+        conn.execute("BEGIN")
+        meta = conn.execute("SELECT model_key FROM vector_index_meta WHERE id = 1").fetchone()
+        if meta and meta["model_key"] != embedder.index_key:
+            raise RuntimeError("Embedding 模型与已有向量索引不一致，请重新导入知识库。")
         sql = """
             SELECT v.clause_id, v.doc_id, c.chapter, c.article_no, c.content,
-                   d.title, d.source_path, v.vector
+                   d.title, d.source_path, v.dim, v.vector
             FROM vector_index v
             JOIN clauses c ON c.id = v.clause_id
             JOIN documents d ON d.doc_id = v.doc_id
@@ -117,6 +112,11 @@ def search_vector(
             sql += f" WHERE d.doc_id IN ({placeholders})"
             params = list(active_doc_ids)
         rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return []
+    qvec = embedder.embed(query)
+    if any(row["dim"] != len(qvec) for row in rows):
+        raise RuntimeError("查询向量与索引维度不一致，请重新导入知识库。")
     for row in rows:
         vec = json.loads(row["vector"])
         score = cosine_similarity(qvec, vec)

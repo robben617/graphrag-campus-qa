@@ -23,6 +23,12 @@ from .errors import LLMUnavailable
 
 class BaseEmbedder:
     dim: int
+    index_batch_size = 32
+
+    @property
+    def index_key(self) -> str:
+        cls = type(self)
+        return f"{cls.__module__}.{cls.__qualname__}:{self.dim}"
 
     def embed(self, text: str) -> List[float]:
         raise NotImplementedError
@@ -65,9 +71,16 @@ class HashingEmbedder(BaseEmbedder):
 class OpenAIEmbedder(BaseEmbedder):
     """OpenAI 兼容 Embedding 接口（智谱/DeepSeek/Qwen/DashScope 等）。"""
 
+    index_batch_size = 1  # 兼容只支持单条输入的服务商
+
     def __init__(self, settings: Settings):
         self.settings = settings
         self.dim = settings.embedding_dim
+
+    @property
+    def index_key(self) -> str:
+        config = f"{self.settings.embedding_base_url.rstrip('/')}\0{self.settings.embedding_model}\0{self.dim}"
+        return "api:" + hashlib.sha256(config.encode("utf-8")).hexdigest()
 
     def _call(self, texts: Sequence[str]) -> List[List[float]]:
         try:
@@ -103,6 +116,10 @@ class LocalEmbedder(BaseEmbedder):
     def __init__(self, settings: Settings):
         self.settings = settings
         self.dim = 0  # 首次 embed 后由实际向量长度确定
+
+    @property
+    def index_key(self) -> str:
+        return "local:" + hashlib.sha256(self.settings.local_embedding_path.encode("utf-8")).hexdigest()
 
     def embed(self, text: str) -> List[float]:
         vec = self.embed_batch([text])[0]

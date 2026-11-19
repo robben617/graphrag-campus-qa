@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
+from app.config import PROJECT_ROOT
 from app.db import Database
-from app.ingest.importer import run_import
+from app.embeddings import HashingEmbedder
+from app.ingest.importer import import_raw_documents, run_import
 from app.ingest.stats import check_minimum, collect
+from app.retrieval.vector import ensure_vector_index
 
 
 def _counts(db: Database) -> dict:
@@ -63,6 +67,32 @@ def test_reimport_is_idempotent(tmp_data_dir: Path):
         ).fetchall()
     assert dup_doc == []
     assert dup_ent == []
+
+
+def test_reimport_preserves_unchanged_clauses_and_vectors(tmp_path):
+    raw = tmp_path / "raw"
+    shutil.copytree(PROJECT_ROOT / "demo" / "raw", raw)
+    db = Database(str(tmp_path / "incremental.db"))
+    db.init_schema()
+    embedder = HashingEmbedder()
+
+    def clauses():
+        with db.session() as conn:
+            return {r["content"]: r["id"] for r in conn.execute("SELECT id, content FROM clauses")}
+
+    import_raw_documents(db, raw)
+    first = clauses()
+    assert ensure_vector_index(db, embedder) == len(first)
+    import_raw_documents(db, raw)
+    assert clauses() == first
+    assert ensure_vector_index(db, embedder) == 0
+
+    (raw / "library-2024.txt").write_text("纸质图书的借阅期限是十天。", encoding="utf-8")
+    import_raw_documents(db, raw)
+    updated = clauses()
+    assert "纸质图书的借阅期限是十四天。" not in updated
+    assert all(updated[text] == first[text] for text in first.keys() & updated.keys())
+    assert ensure_vector_index(db, embedder) == 1
 
 
 def test_manifest_dangling_reference_detected(tmp_data_dir: Path):

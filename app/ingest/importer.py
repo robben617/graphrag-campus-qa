@@ -252,10 +252,15 @@ def import_raw_documents(db: Database, raw_dir: Path) -> ImportResult:
 
             conn.execute(
                 """
-                INSERT OR REPLACE INTO documents
+                INSERT INTO documents
                 (doc_id, title, category, issuer, publish_date, effective_date,
                  status, version, applies_to, doc_type, source_path, content_hash)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(doc_id) DO UPDATE SET
+                    title=excluded.title, category=excluded.category, issuer=excluded.issuer,
+                    publish_date=excluded.publish_date, effective_date=excluded.effective_date,
+                    status=excluded.status, version=excluded.version, applies_to=excluded.applies_to,
+                    doc_type=excluded.doc_type, source_path=excluded.source_path, content_hash=excluded.content_hash
                 """,
                 (
                     doc_id,
@@ -274,8 +279,24 @@ def import_raw_documents(db: Database, raw_dir: Path) -> ImportResult:
             )
             result.documents += 1
 
-            # 幂等：先删除该文档旧条款，再写入新条款
-            conn.execute("DELETE FROM clauses WHERE doc_id = ?", (doc_id,))
+            blocks = [] if no_text else doc_parser.split_into_blocks(raw_text, mode)
+            clauses = [(b.chapter, b.article_no, b.content, b.seq) for b in blocks if b.content]
+            current = set(clauses)
+            existing = conn.execute(
+                "SELECT id, chapter, article_no, content, seq FROM clauses WHERE doc_id = ?", (doc_id,)
+            ).fetchall()
+            retained = set()
+            for row in existing:
+                clause = (row["chapter"], row["article_no"], row["content"], row["seq"])
+                if clause in current and clause not in retained:
+                    retained.add(clause)
+                else:
+                    conn.execute("DELETE FROM clauses WHERE id = ?", (row["id"],))
+            conn.executemany(
+                "INSERT INTO clauses (doc_id, chapter, article_no, content, seq) VALUES (?,?,?,?,?)",
+                [(doc_id, *clause) for clause in clauses if clause not in retained],
+            )
+            result.clauses += len(clauses)
 
             if no_text:
                 result.no_text_documents += 1
@@ -284,16 +305,6 @@ def import_raw_documents(db: Database, raw_dir: Path) -> ImportResult:
                     f"已保留文档记录但【跳过条款写入】——需先做 OCR 或改用文本版文件，否则检索不到它。"
                 )
                 continue
-
-            blocks = doc_parser.split_into_blocks(raw_text, mode)
-            for block in blocks:
-                if not block.content:
-                    continue
-                conn.execute(
-                    "INSERT INTO clauses (doc_id, chapter, article_no, content, seq) VALUES (?,?,?,?,?)",
-                    (doc_id, block.chapter, block.article_no, block.content, block.seq),
-                )
-                result.clauses += 1
 
             # 每条通知/手册若来自章节结构，附加"文档→章节"关系太碎，统一用第 N 条索引
             if mode == "chapter" and any(b.article_no for b in blocks):

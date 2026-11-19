@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.db import Database
-from app.embeddings import HashingEmbedder
+from app.embeddings import HashingEmbedder, LocalEmbedder
 from app.config import Settings
 from app.retrieval import search as s
 from app.retrieval.hybrid import search_hybrid
@@ -71,6 +71,32 @@ def test_entity_name_alone_does_not_match_unrelated_clause(tmp_path):
     result = s.search(db, "奖学金申请需要哪些材料？")
     assert result.entities == ["奖学金"]
     assert not result.hits
+
+
+def test_vector_index_reuses_local_model_and_detects_same_dimension_switch(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "models.db"))
+    db.init_schema()
+    with db.session() as conn:
+        conn.execute("INSERT INTO documents (doc_id, title) VALUES ('policy', '图书借阅规定')")
+        conn.execute("INSERT INTO clauses (doc_id, content) VALUES ('policy', '学生可以借阅图书。')")
+
+    calls = []
+
+    def encode(settings, texts):
+        calls.append(list(texts))
+        return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr("app.ml_local.encode_local", encode)
+    settings = Settings()
+    assert ensure_vector_index(db, LocalEmbedder(settings)) == 1
+    assert ensure_vector_index(db, LocalEmbedder(settings)) == 0
+    assert len(calls) == 1
+
+    new_embedder = HashingEmbedder(dim=2)
+    comparison = search_hybrid(db, "借阅图书", new_embedder)
+    assert comparison.keyword and not comparison.vector and comparison.degraded_reason
+    assert ensure_vector_index(db, new_embedder) == 1
+    assert not search_hybrid(db, "借阅图书", new_embedder).degraded_reason
 
 
 def test_entity_exact_search(imported_db):
