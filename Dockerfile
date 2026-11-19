@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 应用代码与公开样例
 COPY app ./app
 COPY demo ./demo
+COPY frontend ./frontend
 
 # 本地模型（体积大，通常挂载卷提供；如内置于镜像则取消下一行注释）
 # COPY local_models ./local_models

@@ -11,6 +11,7 @@ x-knowledge-service: &knowledge-service
     USE_LOCAL_RERANKER: ${USE_LOCAL_RERANKER:-auto}
     LOCAL_MODELS_DIR: /app/local_models/models
     ALLOW_SERVER_LLM_FALLBACK: ${ALLOW_SERVER_LLM_FALLBACK:-false}
+    SCHOOL_SERVE_FRONTEND: "true"
   volumes:
     - school-data:/app/runtime
     - local-models:/app/local_models
@@ -38,6 +39,7 @@ services:
 
   frontend:
     image: nginx:alpine
+    profiles: [nginx]
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro

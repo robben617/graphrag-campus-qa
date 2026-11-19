@@ -25,7 +25,9 @@
 docker compose up --build -d
 ```
 
-打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)，提问「纸质图书的借阅期限是多久？」可查看现行条款和引用，提问「校园巴士几点发车？」可查看拒答。演示使用仓库内虚构的图书馆规定和本地检索，无需学校 PDF 或 API 密钥。后端就绪检查位于 `/api/v1/ready`。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)，提问「纸质图书的借阅期限是多久？」可查看现行条款和引用，提问「校园巴士几点发车？」可查看拒答。演示使用仓库内虚构的图书馆规定和本地检索，无需学校 PDF 或 API 密钥。就绪检查位于 `/api/v1/ready`。
+
+默认由应用同源提供页面和 API。使用 `docker compose --profile nginx up --build -d` 可启用额外的 Nginx 入口 `http://127.0.0.1:8080`。
 
 用真实语料部署时，设置 `SCHOOL_CORPUS_DIR=./data`、`SCHOOL_IMPORT_PROFILE=standard` 和 `SCHOOL_CONTAINER_DB_NAME=school_kb.db` 再启动 Compose。需要私有模型配置时可指定 `SCHOOL_CONTAINER_ENV_FILE=.env`。语料目录以只读方式挂载，SQLite 库保存在 `school-data` 卷中。
 
@@ -68,7 +70,7 @@ flowchart LR
 - ✅ 用户自带大模型密钥（BYOK）：每人可配置自己的 API Key / Base URL / 模型，密钥 Fernet 加密落库、接口只回掩码、支持保存前连通性测试与一键清除（见「部署形态与对外推广」）
 - ✅ 两种部署形态：`public`（对外演示，不采集用户密钥、默认零成本摘编 + 每日额度）/ `selfhost`（自部署，开放 BYOK 与默认生成），一个环境变量切换，接口与降级行为完全一致
 - ✅ 答案引用全量展开：来源条款 + 关系路径 + 原文片段
-- ✅ 容器化：Dockerfile + docker-compose（应用 + nginx 反代）；备份/恢复脚本
+- ✅ 容器化：Docker Compose 同源前后端演示，支持可选 Nginx 反代与数据库备份/恢复
 - ✅ 平台集成：`/dify/retrieval` 按 Dify External Knowledge API 协议暴露混合检索（默认关闭，配置 `DIFY_RETRIEVAL_API_KEY` 后启用）
 
 ## 能力边界与路线图

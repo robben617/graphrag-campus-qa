@@ -11,9 +11,14 @@ def test_demo_import_and_ask(tmp_path, monkeypatch):
     monkeypatch.setenv("SCHOOL_DB_PATH", db_path)
     monkeypatch.setenv("SCHOOL_DATA_DIR", data_dir)
     monkeypatch.setenv("EMBEDDING_API_KEY", "")
-    settings = Settings(db_path=db_path, data_dir=data_dir, embedding_enabled=False, deploy_mode="public")
+    settings = Settings(
+        db_path=db_path, data_dir=data_dir, embedding_enabled=False, deploy_mode="public", serve_frontend=True
+    )
 
     with TestClient(create_app(settings)) as client:
+        page = client.get("/")
+        assert page.status_code == 200 and "校园知识问答" in page.text
+        assert client.get("/js/main.js").status_code == 200
         assert client.get("/api/v1/ready").status_code == 503
         assert main(["import", "--profile", "demo"]) == 0
         assert client.get("/api/v1/ready").json() == {"status": "ready"}

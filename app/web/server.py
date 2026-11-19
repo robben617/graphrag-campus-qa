@@ -46,10 +46,11 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .. import __version__
-from ..config import Settings
+from ..config import PROJECT_ROOT, Settings
 from ..crypto import SecretBox, build_secret_box
 from ..db import Database
 from ..embeddings import BaseEmbedder, get_embedder
@@ -733,6 +734,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "checks": [c.__dict__ for c in checks],
             "coverage": coverage_summary(db),
         }
+
+    if settings.serve_frontend:
+        app.mount("/", StaticFiles(directory=PROJECT_ROOT / "frontend", html=True), name="frontend")
 
     return app
 

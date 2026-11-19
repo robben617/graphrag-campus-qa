@@ -181,6 +181,7 @@ class Settings:
     cors_origins: str = field(
         default_factory=lambda: os.environ.get("CORS_ORIGINS", "*")
     )
+    serve_frontend: bool = field(default_factory=lambda: _env_bool("SCHOOL_SERVE_FRONTEND"))
     # 本地模型（第三阶段）
     local_models_dir: str = field(
         default_factory=lambda: _resolve(os.environ.get("LOCAL_MODELS_DIR", "local_models/models"))
