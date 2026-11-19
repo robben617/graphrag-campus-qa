@@ -22,20 +22,31 @@ def active_documents(db: Database) -> Dict[str, Dict]:
     """返回所有「参与默认检索」的文档（现行有效 + 已生效 + 未被替代）。"""
     today = _today()
     with db.session() as conn:
+        conn.execute("BEGIN")
         rows = conn.execute(
             """
             SELECT doc_id, title, category, issuer, publish_date, effective_date,
                    status, version, applies_to, doc_type
             FROM documents
-            WHERE status = '现行有效'
+            WHERE status IN ('现行有效', '已被替代')
               AND (effective_date = '' OR effective_date <= ?)
             """,
             (today,),
         ).fetchall()
-        superseded = {
-            r["dst"] for r in conn.execute("SELECT dst FROM relations WHERE rel = 'SUPERSEDES'").fetchall()
-        }
-    return {r["doc_id"]: dict(r) for r in rows if r["doc_id"] not in superseded}
+        replacements = conn.execute(
+            """
+            SELECT r.dst, successor.effective_date
+            FROM relations r JOIN documents successor ON successor.doc_id = r.src
+            WHERE r.rel = 'SUPERSEDES' AND successor.status IN ('现行有效', '已被替代')
+            """
+        ).fetchall()
+    superseded = {r["dst"] for r in replacements if r["effective_date"] <= today}
+    scheduled = {r["dst"] for r in replacements if r["effective_date"] > today}
+    # 兼容旧库：旧版被未来生效的通知提前标记时，保留至替代关系生效。
+    return {
+        r["doc_id"]: dict(r) for r in rows
+        if r["doc_id"] not in superseded and (r["status"] == "现行有效" or r["doc_id"] in scheduled)
+    }
 
 
 def active_doc_ids(db: Database) -> set:
@@ -43,10 +54,17 @@ def active_doc_ids(db: Database) -> set:
 
 
 def superseded_by(db: Database, doc_id: str) -> Optional[str]:
-    """若 doc 被某新文档替代，返回替代者 doc_id，否则 None。"""
+    """返回已生效的替代文件 ID。"""
     with db.session() as conn:
         row = conn.execute(
-            "SELECT src FROM relations WHERE rel='SUPERSEDES' AND dst = ?", (doc_id,)
+            """
+            SELECT r.src FROM relations r JOIN documents successor ON successor.doc_id = r.src
+            WHERE r.rel = 'SUPERSEDES' AND r.dst = ?
+              AND successor.status IN ('现行有效', '已被替代') AND successor.effective_date <= ?
+            ORDER BY successor.effective_date DESC, successor.publish_date DESC, successor.version DESC, r.src
+            LIMIT 1
+            """,
+            (doc_id, _today()),
         ).fetchone()
     return row["src"] if row else None
 
@@ -57,10 +75,15 @@ def validity_report(db: Database) -> Dict:
         rows = conn.execute(
             "SELECT doc_id, title, status, version, effective_date FROM documents ORDER BY doc_id"
         ).fetchall()
+    active = active_doc_ids(db)
     report = []
     for r in rows:
         item = dict(r)
         rep = superseded_by(db, r["doc_id"])
+        if rep and item["status"] == "现行有效":
+            item["status"] = "已被替代"
+        elif r["doc_id"] in active:
+            item["status"] = "现行有效"
         item["superseded_by"] = rep
         report.append(item)
     return {"documents": report}

@@ -2,22 +2,23 @@
 
 SUPERSEDES 自动检测策略（§8 风险应对：不全程自动，仅"建议 + 人工确认"）：
 - 依据「同类别 + 标题关键词相似」发现潜在旧版本；
-- 生成 SUPERSEDES 建议，默认写入（如需更保守可人工审核）；
-- 旧文档 status 置为「已被替代」。
+- 标题一致且顺序可判定时，将新版本指向旧版本；
+- 到生效日才应用替代关系。
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import re
-import uuid
-from dataclasses import dataclass
-from pathlib import Path
+from datetime import date
+from sqlite3 import Connection
 from typing import List, Optional
 
 from ..db import Database
-from ..errors import AppError, NotFoundError
+from ..errors import AppError
+from . import versioning
+
+YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 
 
 def _doc_id(title: str) -> str:
@@ -26,28 +27,62 @@ def _doc_id(title: str) -> str:
 
 def _normalize_title(t: str) -> str:
     """标题归一：去年份/标点/空格，用于相似度判断。"""
-    return re.sub(r"[\s\W_]+", "", t or "")
+    return re.sub(r"[\s\W_]+", "", YEAR.sub("", t))
 
 
 def detect_superseded_candidates(db: Database, category: str, title: str, exclude_doc_id: str) -> List[dict]:
     """找出与新通知同类别、标题高度相似的现存文档，作为潜在替代对象。"""
+    with db.session() as conn:
+        return _find_candidates(conn, category, title, exclude_doc_id)
+
+
+def _find_candidates(conn: Connection, category: str, title: str, exclude_doc_id: str) -> List[dict]:
     norm_title = _normalize_title(title)
     if not norm_title:
         return []
-    with db.session() as conn:
-        rows = conn.execute(
-            "SELECT doc_id, title, status, version FROM documents WHERE category = ? AND doc_id != ?",
-            (category, exclude_doc_id),
-        ).fetchall()
+    rows = conn.execute(
+        """
+        SELECT doc_id, title, status, version, publish_date, effective_date, issuer, applies_to
+        FROM documents WHERE category = ? AND doc_id != ? ORDER BY doc_id
+        """,
+        (category, exclude_doc_id),
+    ).fetchall()
     candidates = []
     for r in rows:
         norm = _normalize_title(r["title"])
-        # 相似度：去数字年份后相同 / 或一方是另一方子串
-        a = re.sub(r"\d+", "", norm_title)
-        b = re.sub(r"\d+", "", norm)
-        if a and b and (a == b or a in b or b in a):
+        if norm and (norm_title in norm or norm in norm_title):
             candidates.append(dict(r))
     return candidates
+
+
+def _revision(doc: dict) -> tuple[int, ...]:
+    for value in (doc["effective_date"], doc["publish_date"]):
+        if value:
+            try:
+                day = date.fromisoformat(value)
+                return day.year, day.month, day.day
+            except ValueError:
+                continue
+    year = YEAR.search(doc["version"]) or YEAR.search(doc["title"])
+    return (int(year[0]),) if year else ()
+
+
+def _write_replacement(conn: Connection, newer: dict, older: dict, today: str) -> bool:
+    conn.execute(
+        "DELETE FROM relations WHERE src = ? AND rel = 'SUPERSEDES' AND dst = ?",
+        (older["doc_id"], newer["doc_id"]),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO relations (src, rel, dst, note) VALUES (?, 'SUPERSEDES', ?, ?)",
+        (newer["doc_id"], older["doc_id"], f"{newer['title']}替代{older['title']}"),
+    )
+    effective = newer["effective_date"] <= today
+    if effective:
+        conn.execute(
+            "UPDATE documents SET status = '已被替代' WHERE doc_id = ? AND status = '现行有效'",
+            (older["doc_id"],),
+        )
+    return effective
 
 
 def ingest_notice(
@@ -71,15 +106,28 @@ def ingest_notice(
         raise AppError("通知内容为空，无法入库。")
     if not title.strip():
         raise AppError("通知标题不能为空。")
+    for value in (publish_date, effective_date):
+        if value:
+            try:
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError(value)
+            except ValueError as exc:
+                raise AppError("发布日期和生效日期必须采用 YYYY-MM-DD 格式。") from exc
 
     doc_id = _doc_id(title)
+    effective_date = effective_date or publish_date
     blocks = doc_parser.split_into_blocks(text, mode="paragraph")
     content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-    # 潜在替代对象（先检测）
-    candidates = detect_superseded_candidates(db, category, title, doc_id)
+    notice = dict(doc_id=doc_id, title=title, publish_date=publish_date, effective_date=effective_date, version=version)
+    revision = _revision(notice)
+    today = versioning._today()
+    superseded = []
+    scheduled = []
+    archived_by = []
 
     with db.session() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        candidates = _find_candidates(conn, category, title, doc_id)
         conn.execute(
             """
             INSERT OR REPLACE INTO documents
@@ -100,17 +148,25 @@ def ingest_notice(
                 (doc_id, block.chapter, block.article_no, block.content, block.seq),
             )
 
-        superseded: List[str] = []
         if auto_supersede:
             for cand in candidates:
-                conn.execute(
-                    "INSERT OR REPLACE INTO relations (src, rel, dst, note) VALUES (?,?,?,?)",
-                    (doc_id, "SUPERSEDES", cand["doc_id"], f"{title}替代{cand['title']}"),
-                )
-                conn.execute(
-                    "UPDATE documents SET status = '已被替代' WHERE doc_id = ?", (cand["doc_id"],)
-                )
-                superseded.append(cand["doc_id"])
+                if (
+                    _normalize_title(title) != _normalize_title(cand["title"])
+                    or (issuer and cand["issuer"] and issuer != cand["issuer"])
+                    or (applies_to and cand["applies_to"] and applies_to != cand["applies_to"])
+                ):
+                    continue
+                current = _revision(cand)
+                if not revision or not current or revision == current:
+                    continue
+                if revision[0] == current[0] and len(revision) != len(current):
+                    continue
+                if revision > current:
+                    effective = _write_replacement(conn, notice, cand, today)
+                    (superseded if effective else scheduled).append(cand["doc_id"])
+                elif cand["status"] in ("现行有效", "已被替代"):
+                    if _write_replacement(conn, cand, notice, today):
+                        archived_by.append(cand["doc_id"])
 
     # 增量构建向量
     try:
@@ -127,5 +183,7 @@ def ingest_notice(
         "title": title,
         "clauses": len([b for b in blocks if b.content]),
         "superseded": superseded,
+        "scheduled_supersedes": scheduled,
+        "archived_by": archived_by,
         "candidates": [c["doc_id"] for c in candidates],
     }

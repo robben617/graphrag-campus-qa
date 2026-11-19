@@ -130,12 +130,17 @@
     box.innerHTML = '';
     try {
       const r = await API.ingestNotice(payload);
-      const sup = (r.superseded || []).length
-        ? `<div class="cite" style="border-color:var(--warn);background:#fffbeb">已将旧文件置为「已被替代」：${escapeHtml(r.superseded.join('、'))}</div>`
-        : '<div class="muted" style="margin-top:6px">未检测到需要替代的同类旧文件。</div>';
+      const updates = [
+        ['已替代旧文件', r.superseded],
+        ['到生效日替代', r.scheduled_supersedes],
+        ['本通知已被更新文件替代', r.archived_by],
+      ];
+      const sup = updates.filter(([, ids]) => ids?.length).map(([label, ids]) =>
+        `<div class="cite" style="border-color:var(--warn);background:#fffbeb">${label}：${escapeHtml(ids.join('、'))}</div>`
+      ).join('') || '<div class="muted" style="margin-top:6px">未自动建立替代关系。</div>';
       box.innerHTML = `<div class="card" style="background:#f0fdf4;border-color:#bbf7d0">
         ✅ 入库成功：<b>${escapeHtml(r.title)}</b><br/>
-        <span class="muted">doc_id：${escapeHtml(r.doc_id)} · 条款块：${r.clauses} 段${(r.candidates || []).length ? ' · 候选旧版：' + escapeHtml(r.candidates.join('、')) : ''}</span>
+        <span class="muted">doc_id：${escapeHtml(r.doc_id)} · 条款块：${r.clauses} 段${(r.candidates || []).length ? ' · 相似通知：' + escapeHtml(r.candidates.join('、')) : ''}</span>
       </div>${sup}`;
       // 入库后时效清单会变，顺手刷新
       loadVersioning();
