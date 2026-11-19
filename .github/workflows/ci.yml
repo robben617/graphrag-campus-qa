@@ -1,17 +1,9 @@
 name: CI
 
-# 为什么 CI 只跑「语料无关」的检查？
-# ---------------------------------------------------------------------------
-# 本项目的测试多用 `tmp_data_dir` / `imported_db` 夹具，会对 `data/` 做一次完整导入，
-# 因此依赖 `data/raw/` 下的原始语料（学生手册 PDF 等）。而这些文件版权归校方、**未随
-# 仓库分发**，且 importer 对 manifest 缺失文件是显式报错、KG 中出现引用不到的文档还会
-# 抛「悬空关系」——所以无法在 CI 里跑完整用例。
-# 完整 67 项请在本地放好原始语料与 BGE 模型后执行：python -m pytest -q
-# 本工作流负责守住「不依赖语料」的那部分：前端语法、数据文件完整性、后端能否装配、
-# 以及 6 个语料无关用例（含评测集规模与降级链）。
+# CI 使用公开演示语料验证导入与问答。完整回归在本地补齐学生手册等文件后运行。
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
   workflow_dispatch:
 
@@ -50,24 +42,23 @@ jobs:
         run: |
           python - <<'PY'
           import glob, json
-          files = sorted(glob.glob("data/**/*.json", recursive=True))
+          files = sorted(glob.glob("data/**/*.json", recursive=True) + glob.glob("demo/**/*.json", recursive=True))
           for f in files:
               json.load(open(f, encoding="utf-8"))
           print(f"{len(files)} 个 JSON 文件均可解析")
           PY
 
-      - name: 后端冒烟（装配应用 + CLI 可运行）
-        run: |
-          python -c "from app.config import get_settings; from app.web.server import create_app; create_app(get_settings()); print('create_app 成功')"
-          python -m app.cli stats > stats.txt || true
-          grep -q "结果：" stats.txt && echo "CLI 可运行"
-
-      - name: 运行测试（语料无关用例）
+      - name: 运行公开演示冒烟与回归测试
         env:
           USE_LOCAL_EMBEDDING: "off"
           USE_LOCAL_RERANKER: "off"
         run: |
           python -m pytest -q \
+            tests/test_demo.py \
+            tests/test_versioning.py \
+            tests/test_retrieval.py::test_hybrid_filters_inactive_documents_before_ranking \
+            tests/test_retrieval.py::test_faq_requires_exact_question_and_active_source \
+            tests/test_retrieval.py::test_entity_name_alone_does_not_match_unrelated_clause \
             tests/test_qa.py::test_storage_unavailable_raises \
             tests/test_phase2.py::test_hashing_embedder_deterministic \
             tests/test_phase3.py::test_local_model_paths_configured \

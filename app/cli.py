@@ -45,6 +45,12 @@ def cmd_import(args) -> int:
         for w in result.warnings:
             print(f"  - {w}")
 
+    if args.profile == "demo":
+        if not result.clauses:
+            print("演示语料没有可检索条款。", file=sys.stderr)
+            return 1
+        return 0
+
     stats = collect(db)
     checks, ok = check_minimum(stats)
     print("\n" + format_report(stats, checks, ok))
@@ -150,7 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("import", help="幂等导入数据（含向量索引）")
+    pi = sub.add_parser("import", help="幂等导入数据（含向量索引）")
+    pi.add_argument("--profile", choices=("standard", "demo"), default="standard", help="demo 仅校验存在可检索条款")
     sub.add_parser("stats", help="统计与最小规模校验")
 
     pa = sub.add_parser("ask", help="单轮问答")

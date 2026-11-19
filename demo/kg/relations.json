@@ -1,0 +1,4 @@
+[
+  {"src":"demo:library-2025","rel":"SUPERSEDES","dst":"demo:library-2024","note":"2025 年演示规定生效后替代旧版"},
+  {"src":"demo:borrowing","rel":"HANDLED_BY","dst":"demo:library-desk","note":"图书借阅与续借由服务台办理"}
+]

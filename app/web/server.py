@@ -688,6 +688,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return eval_mod.latest_report(db)
 
     # ---------- 健康/统计 ----------
+    @app.get("/api/v1/ready")
+    def ready(db: Database = Depends(deps.get_db)):
+        with db.session() as conn:
+            has_clauses = conn.execute("SELECT 1 FROM clauses LIMIT 1").fetchone()
+        if not has_clauses:
+            return JSONResponse(status_code=503, content={"status": "empty"})
+        return {"status": "ready"}
+
     @app.get("/api/v1/health")
     def health(
         db: Database = Depends(deps.get_db),

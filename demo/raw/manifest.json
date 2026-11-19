@@ -1,0 +1,4 @@
+[
+  {"id":"demo:library-2024","file":"library-2024.txt","title":"演示图书馆借阅规定（旧版）","category":"图书馆","effective_date":"2024-01-01","status":"已被替代","version":"2024","split_mode":"paragraph"},
+  {"id":"demo:library-2025","file":"library-2025.txt","title":"演示图书馆借阅规定","category":"图书馆","effective_date":"2025-01-01","status":"现行有效","version":"2025","split_mode":"paragraph"}
+]

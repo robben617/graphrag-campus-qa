@@ -19,6 +19,16 @@
 > 第三阶段说明：`docs/第三阶段设计说明.md`
 > 全部文档索引：`docs/README.md`
 
+## 一分钟演示
+
+```bash
+docker compose up --build -d
+```
+
+打开 [http://127.0.0.1:8080](http://127.0.0.1:8080)，提问「纸质图书的借阅期限是多久？」可查看现行条款和引用，提问「校园巴士几点发车？」可查看拒答。演示使用仓库内虚构的图书馆规定和本地检索，无需学校 PDF 或 API 密钥。后端就绪检查位于 `/api/v1/ready`。
+
+用真实语料部署时，设置 `SCHOOL_CORPUS_DIR=./data`、`SCHOOL_IMPORT_PROFILE=standard` 和 `SCHOOL_CONTAINER_DB_NAME=school_kb.db` 再启动 Compose。需要私有模型配置时可指定 `SCHOOL_CONTAINER_ENV_FILE=.env`。语料目录以只读方式挂载，SQLite 库保存在 `school-data` 卷中。
+
 ## 架构
 
 ```mermaid
@@ -187,7 +197,7 @@ python -m http.server 5500
 | 大模型密钥 | `GET/PUT/DELETE /llm/config`、`POST /llm/config/test`（BYOK，仅 `selfhost` 形态可写，见「部署形态与对外推广」） |
 | 维护 | `POST /ingest/notice`（老师）、`POST /evaluation/run`、`GET /evaluation/latest` |
 | 引用 | `GET /graph/paths/{node_id}` |
-| 运维 | `GET /health`、`GET /stats` |
+| 运维 | `GET /health`、`GET /ready`、`GET /stats` |
 | 集成 | `POST /dify/retrieval`（Dify External Knowledge API 协议，默认关闭） |
 
 ## 部署形态与对外推广
@@ -333,7 +343,7 @@ python -m pytest -v
 
 > 测试默认 `USE_LOCAL_* = off`（哈希向量器）以加速；本地模型推理在第三阶段已单独实测（BGE 512 维、reranker 排序正确）。
 
-**CI**：`.github/workflows/ci.yml` 在 push / PR 时自动运行（Python 3.10 + 3.12），负责**不依赖原始语料**的那部分质量门禁：前端脚本语法检查、`data/**/*.json` 完整性、后端应用装配冒烟，以及 6 个语料无关用例（含评测集规模与 Embedding 降级链）。
+**CI**：`.github/workflows/ci.yml` 在 `main` 和优化分支的 push、PR 中运行 Python 3.10 / 3.12 测试。公开样例覆盖建库、就绪检查、问答引用和拒答，另有前端语法、JSON 完整性和检索回归检查。
 
 > 完整 95 项测试依赖 `data/raw/` 下的原始语料（学生手册 PDF 等，依版权未入库），因此无法在 CI 中运行——请在本地放好原始文件与 BGE 模型后执行 `python -m pytest -q`。
 

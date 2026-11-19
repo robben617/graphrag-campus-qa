@@ -1,0 +1,3 @@
+[
+  {"id":"demo:quiz-loan","category":"图书馆","difficulty":"简单","question":"图书借阅期限是多久？","options":["十四天","三十天"],"answer":1,"explanation":"现行演示规定的借阅期限为三十天。","source":"《演示图书馆借阅规定》"}
+]

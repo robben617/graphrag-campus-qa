@@ -1,0 +1,4 @@
+[
+  {"id":"demo:borrowing","kind":"entity","name":"图书借阅","category":"图书馆"},
+  {"id":"demo:library-desk","kind":"department","name":"图书馆服务台","category":"图书馆"}
+]
