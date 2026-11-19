@@ -103,9 +103,8 @@ def _search_clauses(
         rows = conn.execute(sql, params).fetchall()
 
         # 实体名映射：用于"命中实体名额外加分"
-        ent_rows = conn.execute("SELECT name, category FROM entities").fetchall()
+        ent_rows = conn.execute("SELECT name FROM entities").fetchall()
         entity_names = {r["name"] for r in ent_rows}
-        entity_cats = {r["name"]: r["category"] for r in ent_rows}
 
     for row in rows:
         content = row["content"]
@@ -120,7 +119,7 @@ def _search_clauses(
                 hit += 1
             if t in title:
                 hit += 0.5
-            if t in entity_names:
+            if hit and t in entity_names:
                 hit += 2
             if hit > 0:
                 score += hit
@@ -151,30 +150,15 @@ def _search_clauses(
 
 
 def search_faq(db: Database, question: str) -> Optional[dict]:
-    """FAQ 精确/关键词匹配：优先精确去符号等值，其次关键词重合率高的 top 命中。"""
-    import re
-    norm = lambda s: re.sub(r"[\s\W_]+", "", s)  # noqa: E731
-    q_norm = norm(question)
+    """匹配忽略标点和空白后的完整问题。"""
+    q_norm = _re.sub(r"[\s\W_]+", "", question)
+    if not q_norm:
+        return None
     with db.session() as conn:
         faqs = conn.execute("SELECT qid, question, answer, category, source FROM faq").fetchall()
-    if not faqs:
-        return None
-    # 精确匹配
     for f in faqs:
-        if norm(f["question"]) == q_norm:
+        if _re.sub(r"[\s\W_]+", "", f["question"]) == q_norm:
             return dict(f)
-    # 关键词重合匹配
-    q_tokens = set(tokenizer.extract_keywords(question))
-    best, best_score = None, 0.0
-    for f in faqs:
-        f_tokens = set(tokenizer.extract_keywords(f["question"]))
-        if not f_tokens:
-            continue
-        overlap = len(q_tokens & f_tokens) / len(f_tokens)
-        if overlap > best_score:
-            best, best_score = dict(f), overlap
-    if best_score >= 0.5:
-        return best
     return None
 
 

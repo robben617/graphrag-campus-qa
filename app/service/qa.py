@@ -164,7 +164,8 @@ class QAService:
             raise
 
         # 时效过滤：仅检索现行有效且已生效、未被替代的文档
-        active_ids = versioning.active_doc_ids(self.db)
+        active_docs = versioning.active_documents(self.db)
+        active_ids = set(active_docs)
 
         # 混合检索（关键词 + 向量 + RRF + 可选 reranker）
         # 向量路不可用时 search_hybrid 内部已降级为关键词单路，这里只负责把提示带出去
@@ -175,11 +176,21 @@ class QAService:
         hits = comparison.hybrid
         degradation = comparison.degraded_reason or None
 
-        # FAQ 精确命中 → 确定性回答（但引用仍走检索）
-        faq_match = search_mod.search_faq(self.db, q)
-
         # 相关实体（用于图遍历与答案标注）
         entities = self._related_entities(q)
+
+        # FAQ 仅在已标注来源有现行条款命中时用作正式答案。
+        faq_match = search_mod.search_faq(self.db, q)
+        if faq_match:
+            source, separator, _ = faq_match["source"].partition("》")
+            if separator and source.startswith("《"):
+                source_ids = {doc_id for doc_id, doc in active_docs.items() if doc["title"] == source[1:]}
+                if source_ids:
+                    faq_hits = search_mod.search(
+                        self.db, q, top_k=self.settings.top_k, active_doc_ids=source_ids
+                    ).hits
+                    if faq_hits:
+                        return self._faq_answer(q, faq_match, faq_hits, entities, degradation)
 
         # 冲突检测（命中文档是否含被替代版本）
         conflict = None
@@ -188,16 +199,9 @@ class QAService:
 
         # 拒答判定以「关键词检索是否命中实质内容」为准：
         # 离线哈希向量器对中文区分度有限，会把无关条款也召回（见 diag），
-        # 因此不能仅凭向量命中就认定"知识库有资料"。关键词零命中且无 FAQ → 拒答。
-        if not comparison.keyword and not faq_match:
+        # 因此不能仅凭向量命中就认定"知识库有资料"。
+        if not comparison.keyword or not hits:
             return self._refuse(q, degradation)
-
-        if not hits and not faq_match:
-            return self._refuse(q, degradation)
-
-        # 优先 FAQ 确定性回答
-        if faq_match:
-            return self._faq_answer(q, faq_match, hits, entities, active_ids, degradation)
 
         # 生成式/摘编回答
         citations = [_hit_to_citation(h) for h in hits]
@@ -236,7 +240,7 @@ class QAService:
             can_enhance=(not generated) and enhance_allowed,
         )
 
-    def _faq_answer(self, q, faq_match, hits, entities, active_ids, degradation_notice=None) -> QAAnswer:
+    def _faq_answer(self, q, faq_match, hits, entities, degradation_notice=None) -> QAAnswer:
         citations = [_hit_to_citation(h) for h in hits]
         answer = faq_match["answer"]
         answer = self._append_mastery_hint(answer, entities)

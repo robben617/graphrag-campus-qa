@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from app.db import Database
 from app.embeddings import HashingEmbedder
+from app.config import Settings
 from app.retrieval import search as s
 from app.retrieval.hybrid import search_hybrid
 from app.retrieval.vector import ensure_vector_index
 from app.service.versioning import active_doc_ids
+from app.service.qa import QAService
 
 
 def test_hybrid_filters_inactive_documents_before_ranking(tmp_path):
@@ -33,6 +35,42 @@ def test_hybrid_filters_inactive_documents_before_ranking(tmp_path):
 
     empty = search_hybrid(db, question, embedder, top_k=1, active_doc_ids=set())
     assert not (empty.keyword or empty.vector or empty.hybrid)
+
+
+def test_faq_requires_exact_question_and_active_source(tmp_path):
+    db = Database(str(tmp_path / "faq.db"))
+    db.init_schema()
+    with db.session() as conn:
+        conn.execute("INSERT INTO documents (doc_id, title) VALUES ('handbook', '学生手册')")
+        conn.execute("INSERT INTO clauses (doc_id, content) VALUES ('handbook', '补考不及格者须重修。')")
+        conn.executemany(
+            "INSERT INTO faq (qid, question, answer, source) VALUES (?, ?, ?, '《学生手册》教务章节')",
+            [("retake", "挂科了能重修吗？", "可以重修。"), ("grant", "国家奖学金和国家助学金有什么区别？", "申请条件不同。")],
+        )
+
+    assert s.search_faq(db, "补考和重修有什么区别？") is None
+    assert s.search_faq(db, "国家励志奖学金的金额是多少？") is None
+    qa = QAService(db, Settings(embedding_enabled=False))
+    answer = qa.ask("挂科了能重修吗", generate=False)
+    assert answer.mode == "精确FAQ"
+    assert [citation.doc_id for citation in answer.citations] == ["handbook"]
+
+    with db.session() as conn:
+        conn.execute("UPDATE documents SET status = '已废止' WHERE doc_id = 'handbook'")
+    assert not qa.ask("挂科了能重修吗？", generate=False).found
+
+
+def test_entity_name_alone_does_not_match_unrelated_clause(tmp_path):
+    db = Database(str(tmp_path / "entity.db"))
+    db.init_schema()
+    with db.session() as conn:
+        conn.execute("INSERT INTO documents (doc_id, title) VALUES ('library', '图书馆借阅规定')")
+        conn.execute("INSERT INTO clauses (doc_id, content) VALUES ('library', '图书每次最多可借三本。')")
+        conn.execute("INSERT INTO entities (eid, kind, name) VALUES ('scholarship', 'entity', '奖学金')")
+
+    result = s.search(db, "奖学金申请需要哪些材料？")
+    assert result.entities == ["奖学金"]
+    assert not result.hits
 
 
 def test_entity_exact_search(imported_db):
