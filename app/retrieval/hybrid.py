@@ -100,7 +100,9 @@ def search_hybrid(
     active_doc_ids: Optional[set] = None,
     settings=None,
 ) -> RetrievalComparison:
-    kw = keyword_search.search(db, question, top_k=top_k).hits
+    kw = keyword_search.search(
+        db, question, top_k=top_k, active_doc_ids=active_doc_ids
+    ).hits
 
     # 向量路：失败即降级为关键词单路，保证问答链路不中断（§7.2）
     degraded_reason = ""

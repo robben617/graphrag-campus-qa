@@ -81,20 +81,26 @@ def search_entities(db: Database, tokens: List[str]) -> List[dict]:
     return out
 
 
-def _search_clauses(db: Database, tokens: List[str], top_k: int) -> List[Hit]:
-    if not tokens:
+def _search_clauses(
+    db: Database, tokens: List[str], top_k: int, active_doc_ids: Optional[set[str]] = None
+) -> List[Hit]:
+    if not tokens or (active_doc_ids is not None and not active_doc_ids):
         return []
     weak = set(tokenizer.weak_tokens(tokens))
     hits: List[Hit] = []
 
+    sql = """
+        SELECT c.doc_id, c.chapter, c.article_no, c.content, c.seq,
+               d.title, d.category, d.status, d.source_path
+        FROM clauses c JOIN documents d ON c.doc_id = d.doc_id
+    """
+    params = tuple(active_doc_ids) if active_doc_ids is not None else ()
+    if params:
+        placeholders = ",".join("?" for _ in params)
+        sql += f" WHERE d.doc_id IN ({placeholders})"
+
     with db.session() as conn:
-        rows = conn.execute(
-            """
-            SELECT c.doc_id, c.chapter, c.article_no, c.content, c.seq,
-                   d.title, d.category, d.status, d.source_path
-            FROM clauses c JOIN documents d ON c.doc_id = d.doc_id
-            """
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
 
         # 实体名映射：用于"命中实体名额外加分"
         ent_rows = conn.execute("SELECT name, category FROM entities").fetchall()
@@ -172,10 +178,12 @@ def search_faq(db: Database, question: str) -> Optional[dict]:
     return None
 
 
-def search(db: Database, question: str, top_k: int = 5) -> SearchResult:
+def search(
+    db: Database, question: str, top_k: int = 5, *, active_doc_ids: Optional[set[str]] = None
+) -> SearchResult:
     """综合检索：FAQ 匹配 + 条款命中 + 相关实体。"""
     tokens = tokenizer.extract_keywords(question)
     faq_hit = search_faq(db, question)
     entities = search_entities(db, tokens)
-    hits = _search_clauses(db, tokens, top_k)
+    hits = _search_clauses(db, tokens, top_k, active_doc_ids)
     return SearchResult(hits=hits, entities=[e["name"] for e in entities], faq_match=faq_hit)

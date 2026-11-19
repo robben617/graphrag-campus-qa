@@ -2,7 +2,37 @@
 
 from __future__ import annotations
 
+from app.db import Database
+from app.embeddings import HashingEmbedder
 from app.retrieval import search as s
+from app.retrieval.hybrid import search_hybrid
+from app.retrieval.vector import ensure_vector_index
+from app.service.versioning import active_doc_ids
+
+
+def test_hybrid_filters_inactive_documents_before_ranking(tmp_path):
+    db = Database(str(tmp_path / "retrieval.db"))
+    db.init_schema()
+    with db.session() as conn:
+        conn.executemany(
+            "INSERT INTO documents (doc_id, title, status) VALUES (?, ?, ?)",
+            [("old", "奖学金申请截止日期", "已废止"), ("new", "现行通知", "现行有效")],
+        )
+        conn.executemany(
+            "INSERT INTO clauses (doc_id, content) VALUES (?, ?)",
+            [("old", "奖学金申请截止日期为六月一日。"), ("new", "奖学金申请于六月十日截止。")],
+        )
+    embedder = HashingEmbedder()
+    ensure_vector_index(db, embedder)
+    question = "奖学金申请截止日期"
+
+    assert s.search(db, question, top_k=1).hits[0].doc_id == "old"
+    comparison = search_hybrid(db, question, embedder, top_k=1, active_doc_ids=active_doc_ids(db))
+    for hits in (comparison.keyword, comparison.vector, comparison.hybrid):
+        assert [hit.doc_id for hit in hits] == ["new"]
+
+    empty = search_hybrid(db, question, embedder, top_k=1, active_doc_ids=set())
+    assert not (empty.keyword or empty.vector or empty.hybrid)
 
 
 def test_entity_exact_search(imported_db):

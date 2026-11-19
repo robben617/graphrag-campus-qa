@@ -99,6 +99,8 @@ def search_vector(
     active_doc_ids: Optional[set] = None,
 ) -> List[VectorHit]:
     """对条款向量做余弦相似度检索，返回 Top-K。active_doc_ids 用于时效过滤。"""
+    if active_doc_ids is not None and not active_doc_ids:
+        return []
     qvec = embedder.embed(query)
     hits: List[VectorHit] = []
     with db.session() as conn:
@@ -111,8 +113,6 @@ def search_vector(
         """
         params: list = []
         if active_doc_ids is not None:
-            if not active_doc_ids:
-                return []
             placeholders = ",".join("?" for _ in active_doc_ids)
             sql += f" WHERE d.doc_id IN ({placeholders})"
             params = list(active_doc_ids)
