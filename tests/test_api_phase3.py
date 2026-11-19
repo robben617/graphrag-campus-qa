@@ -2,30 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-
-@pytest.fixture()
-def client(tmp_data_dir):
-    import os
-
-    # 测试禁用本地大模型，避免每个 fixture 加载模型过慢
-    os.environ["USE_LOCAL_EMBEDDING"] = "off"
-    os.environ["USE_LOCAL_RERANKER"] = "off"
-
-    from app.config import Settings
-    from app.db import Database
-    from app.ingest.importer import run_import
-    from app.web.server import create_app
-    from fastapi.testclient import TestClient
-
-    db_path = str(tmp_data_dir / "school_kb.db")
-    settings = Settings(db_path=db_path)
-    run_import(Database(db_path), tmp_data_dir)
-    app = create_app(settings)
-    return TestClient(app)
-
-
 def _auth(client, role="teacher"):
     r = client.post("/api/v1/users", json={"username": f"u_{role}_{id(role)}", "role": role})
     return r.json()["api_token"]

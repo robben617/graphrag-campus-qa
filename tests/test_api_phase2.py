@@ -2,24 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-
-@pytest.fixture()
-def client(tmp_data_dir):
-    from app.config import Settings
-    from app.db import Database
-    from app.ingest.importer import run_import
-    from app.web.server import create_app
-    from fastapi.testclient import TestClient
-
-    db_path = str(tmp_data_dir / "school_kb.db")
-    settings = Settings(db_path=db_path)
-    run_import(Database(db_path), tmp_data_dir)
-    app = create_app(settings)
-    return TestClient(app)
-
-
 def test_health_has_phase2_fields(client):
     resp = client.get("/api/v1/health")
     assert resp.status_code == 200

@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -78,12 +77,12 @@ def _purge(path: Path) -> None:
 
 
 def pytest_configure(config):
-    """测试统一禁用本地大模型（改用哈希向量器），避免每个 fixture 加载大模型过慢。
-
-    本地模型推理在 test_phase3 中通过 ml_local 直接、显式地验证。
-    """
+    """保持默认测试离线，模型相关场景由各测试显式配置。"""
     os.environ["USE_LOCAL_EMBEDDING"] = "off"
     os.environ["USE_LOCAL_RERANKER"] = "off"
+    for name in ("LLM_API_KEY", "DEEPSEEK_API_KEY", "EMBEDDING_API_KEY", "DIFY_RETRIEVAL_API_KEY"):
+        os.environ[name] = ""
+    os.environ["LLM_ENABLED"] = "false"
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
@@ -92,32 +91,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_sep(
             "-",
             "警告：部分测试临时目录未能清理（被本机的安全删除钩子拦截）。"
-            f"请手工删除 {_work_root()} 下的 testdata-* 目录。",
+            f"请手工删除 {_work_root()} 下的测试临时目录。",
         )
-
-
-def _reset_users(db_path: Path) -> None:
-    """清空从真实库拷贝来的用户记录，让测试从「系统未初始化」的确定状态开始。
-
-    为什么必须做：`data/school_kb.db` 是开发/演示用过的真实库，里面可能残留账号。
-    而「创建用户」的鉴权规则是「库中**一个用户都没有**时，首个账号免鉴权（bootstrap）；
-    此后创建需 admin」—— 残留用户会让所有建号操作都变成需要 admin，与测试意图冲突。
-
-    用户 / 会话 / 掌握 / 答题记录都属于运行时状态，与"数据导入"无关，
-    因此在这里重置，而不是在 `run_import` 里清（导入不该动用户表）。
-    """
-    if not db_path.exists():
-        return
-    conn = None
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("DELETE FROM users")
-        conn.commit()
-    except sqlite3.Error:  # pragma: no cover - 夹具不应因重置失败而中断
-        pass
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def _fresh_dir(prefix: str) -> Path:
@@ -129,37 +104,59 @@ def _fresh_dir(prefix: str) -> Path:
 
 @pytest.fixture()
 def tmp_data_dir() -> Path:
-    """把 data 目录拷贝到测试临时目录（含 PDF），供导入测试使用。
-
-    拷贝后立即清空 users —— 测试需要从「系统未初始化」的确定状态开始，
-    而真实库里可能残留演示账号（原因见 _reset_users）。
-    """
+    """供导入测试修改的独立语料目录。"""
     dest = _fresh_dir("testdata")
-    shutil.copytree(DATA_DIR, dest, dirs_exist_ok=True)
-    _reset_users(dest / "school_kb.db")
-    yield dest
-    _purge(dest)
+    try:
+        for directory in ("raw", "kg"):
+            shutil.copytree(DATA_DIR / directory, dest / directory)
+        for filename in ("faq.json", "quiz.json", "evaluation.json"):
+            shutil.copy2(DATA_DIR / filename, dest / filename)
+        yield dest
+    finally:
+        _purge(dest)
 
 
 @pytest.fixture()
-def db(tmp_data_dir: Path) -> Database:
-    database = Database(str(tmp_data_dir / "school_kb.db"))
+def db(tmp_path: Path) -> Database:
+    database = Database(str(tmp_path / "school_kb.db"))
     database.init_schema()
     return database
 
 
-@pytest.fixture()
-def imported_db(tmp_data_dir: Path) -> Database:
-    """执行一次完整导入后的数据库。
-
-    测试环境禁用本地 BGE 模型（改用哈希向量器），避免每个 fixture 都加载大模型、
-    构建 512 维向量导致测试过慢。本地模型推理由 test_phase3 中单独、显式地验证。
-    """
-    os.environ["USE_LOCAL_EMBEDDING"] = "off"
-    os.environ["USE_LOCAL_RERANKER"] = "off"
-
+@pytest.fixture(scope="session")
+def imported_snapshot():
+    """从语料构建一次基础库。"""
     from app.ingest.importer import run_import
 
-    database = Database(str(tmp_data_dir / "school_kb.db"))
-    run_import(database, tmp_data_dir)
-    return database
+    dest = _fresh_dir("testseed")
+    try:
+        database = Database(str(dest / "school_kb.db"))
+        run_import(database, DATA_DIR)
+        yield database.path
+    finally:
+        _purge(dest)
+
+
+@pytest.fixture()
+def imported_db(imported_snapshot) -> Database:
+    """每个用例使用各自独立的数据库快照。"""
+    from app.backup import backup_db
+
+    dest = _fresh_dir("testdb")
+    try:
+        database = Database(str(dest / "school_kb.db"))
+        backup_db(imported_snapshot, database.path)
+        yield database
+    finally:
+        _purge(dest)
+
+
+@pytest.fixture()
+def client(imported_db):
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings
+    from app.web.server import create_app
+
+    with TestClient(create_app(Settings(db_path=imported_db.path))) as test_client:
+        yield test_client

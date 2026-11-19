@@ -343,13 +343,13 @@ curl -X POST http://127.0.0.1:8000/api/v1/evaluation/run -H "X-User-Token: <teac
 python -m pytest -v
 ```
 
-95 个测试（94 通过 + 1 跳过）覆盖：AT-01（幂等+最小规模）、AT-02（回答+引用）、AT-03（拒答）、AT-04（多轮指代）、AT-05（图谱邻居）、AT-06（自测错题）、AT-07（掌握标记）、AT-08（非法输入/不可用）、**AT-09（Embedding 降级）**、AT-11（时效替代），以及向量/混合/检索对比（P1）、本地模型接入/reranker/增量入库/多用户隔离/评测/引用路径（P2）、权限边界（403 与用户创建 bootstrap）、用户自带密钥（BYOK：掩码、密文落库、隔离、URL 校验、兜底开关）、部署形态与额度（public/selfhost 门控、摘编优先、三道闸门、按天额度与 fail-closed）。
+本轮完整回归共 105 项，104 项通过、1 项跳过。回归覆盖语料导入、问答引用与拒答、多轮指代、图谱邻居、自测、掌握标记、向量检索与降级、时效替代、权限、BYOK 和大模型额度。测试从语料构建一次基础库，再为每个用例复制独立快照。
 
 > 测试默认 `USE_LOCAL_* = off`（哈希向量器）以加速；本地模型推理在第三阶段已单独实测（BGE 512 维、reranker 排序正确）。
 
 **CI**：`.github/workflows/ci.yml` 在 `main` 和优化分支的 push、PR 中运行 Python 3.10 / 3.12 测试。公开样例覆盖建库、就绪检查、问答引用和拒答，另有前端语法、JSON 完整性和检索回归检查。
 
-> 完整 95 项测试依赖 `data/raw/` 下的原始语料（学生手册 PDF 等，依版权未入库），因此无法在 CI 中运行——请在本地放好原始文件与 BGE 模型后执行 `python -m pytest -q`。
+> 完整回归依赖 `data/raw/` 下的原始语料。请在本地放好学生手册等文件，再执行 `python -m pytest -q`。
 
 ## 目录结构
 
@@ -373,7 +373,7 @@ local_models/        # 本地 BGE 模型（gitignore，部署时挂载卷）
 deploy/              # nginx 反向代理配置
 docs/                # 项目设计文档 + 第一/二/三阶段设计说明（索引见 docs/README.md）
 scripts/             # 本地工具（frontend_server.py：禁用缓存的静态服务器）
-tests/               # pytest 测试（95 个）
+tests/               # pytest 回归测试
 .github/workflows/   # CI（push / PR 自动运行）
 Dockerfile
 docker-compose.yml
