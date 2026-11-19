@@ -55,11 +55,13 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_demo.py \
+            tests/test_evaluation_ranking.py \
             tests/test_versioning.py \
             tests/test_retrieval.py::test_hybrid_filters_inactive_documents_before_ranking \
             tests/test_retrieval.py::test_faq_requires_exact_question_and_active_source \
             tests/test_retrieval.py::test_entity_name_alone_does_not_match_unrelated_clause \
             tests/test_retrieval.py::test_vector_index_reuses_local_model_and_detects_same_dimension_switch \
+            tests/test_retrieval.py::test_reranker_can_promote_a_candidate_outside_final_top_k \
             tests/test_import.py::test_reimport_preserves_unchanged_clauses_and_vectors \
             tests/test_qa.py::test_storage_unavailable_raises \
             tests/test_phase2.py::test_hashing_embedder_deterministic \

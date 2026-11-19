@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.db import Database
 from app.embeddings import HashingEmbedder, LocalEmbedder
 from app.config import Settings
+from app.retrieval import hybrid
 from app.retrieval import search as s
 from app.retrieval.hybrid import search_hybrid
 from app.retrieval.vector import ensure_vector_index
@@ -97,6 +98,28 @@ def test_vector_index_reuses_local_model_and_detects_same_dimension_switch(tmp_p
     assert comparison.keyword and not comparison.vector and comparison.degraded_reason
     assert ensure_vector_index(db, new_embedder) == 1
     assert not search_hybrid(db, "借阅图书", new_embedder).degraded_reason
+
+
+def test_reranker_can_promote_a_candidate_outside_final_top_k(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "rerank.db"))
+    hits = [s.Hit(doc_id=str(i), doc_title=str(i), content=str(i)) for i in range(3)]
+    monkeypatch.setattr(hybrid.keyword_search, "search", lambda db, question, top_k, **kwargs: s.SearchResult(hits[:top_k]))
+    monkeypatch.setattr(hybrid.vector_search, "search_vector", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.ml_local.local_reranker_available", lambda settings: True)
+    settings = Settings(rerank_candidate_k=3)
+
+    def promote_last(settings, question, passages, top_k):
+        assert passages == ["0", "1", "2"] and top_k == 1
+        return [(2, 1.0)]
+
+    monkeypatch.setattr("app.ml_local.rerank_local", promote_last)
+    result = search_hybrid(db, "借阅图书", HashingEmbedder(), top_k=1, settings=settings)
+    assert [hit.doc_id for hit in result.keyword] == ["0"]
+    assert [hit.doc_id for hit in result.hybrid] == ["2"]
+
+    monkeypatch.setattr("app.ml_local.rerank_local", lambda *args: None)
+    fallback = search_hybrid(db, "借阅图书", HashingEmbedder(), top_k=1, settings=settings)
+    assert [hit.doc_id for hit in fallback.hybrid] == ["0"]
 
 
 def test_entity_exact_search(imported_db):

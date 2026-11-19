@@ -173,6 +173,7 @@ class Settings:
     # 服务参数
     max_question_len: int = field(default_factory=lambda: _env_int("MAX_QUESTION_LEN", 2000))
     top_k: int = field(default_factory=lambda: _env_int("TOP_K", 5))
+    rerank_candidate_k: int = field(default_factory=lambda: _env_int("RERANK_CANDIDATE_K", 0))
     log_level: str = field(default_factory=lambda: os.environ.get("LOG_LEVEL", "INFO"))
     # 会话
     session_history_limit: int = field(default_factory=lambda: _env_int("SESSION_HISTORY_LIMIT", 20))

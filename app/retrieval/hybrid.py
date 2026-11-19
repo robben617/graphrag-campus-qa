@@ -100,15 +100,19 @@ def search_hybrid(
     active_doc_ids: Optional[set] = None,
     settings=None,
 ) -> RetrievalComparison:
+    from ..ml_local import local_reranker_available
+
+    should_rerank = settings is not None and local_reranker_available(settings)
+    candidate_k = max(top_k, settings.rerank_candidate_k) if should_rerank else top_k
     kw = keyword_search.search(
-        db, question, top_k=top_k, active_doc_ids=active_doc_ids
+        db, question, top_k=candidate_k, active_doc_ids=active_doc_ids
     ).hits
 
     # 向量路：失败即降级为关键词单路，保证问答链路不中断（§7.2）
     degraded_reason = ""
     try:
         vec = vector_search.search_vector(
-            db, question, embedder, top_k=top_k, active_doc_ids=active_doc_ids
+            db, question, embedder, top_k=candidate_k, active_doc_ids=active_doc_ids
         )
     except Exception as exc:  # noqa: BLE001 - 任何向量化/检索异常都降级
         vec = []
@@ -117,16 +121,18 @@ def search_hybrid(
             "vector_retrieval_degraded err_type=%s err=%s", type(exc).__name__, exc
         )
 
-    fused = rrf_fusion(kw, vec, top_k=top_k)
+    fused = rrf_fusion(kw, vec, top_k=candidate_k)
 
     # 可选 reranker 二次排序（本地 BGE-reranker）
-    if settings is not None and fused:
+    if should_rerank and fused:
         reranked = rerank_hits(db, question, fused, top_k=top_k, settings=settings)
         if reranked:
             fused = reranked
+        elif candidate_k > top_k:
+            fused = rrf_fusion(kw[:top_k], vec[:top_k], top_k=top_k)
 
     return RetrievalComparison(
-        question=question, keyword=kw, vector=vec, hybrid=fused,
+        question=question, keyword=kw[:top_k], vector=vec[:top_k], hybrid=fused[:top_k],
         degraded_reason=degraded_reason,
     )
 
