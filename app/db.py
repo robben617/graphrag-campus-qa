@@ -191,6 +191,20 @@ CREATE TABLE IF NOT EXISTS user_llm_configs (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- ============ 第六阶段：管理员配置的系统默认模型 ============
+-- 与 .env 的关系：表里有值就用表里的，没有才落回 .env。
+-- 这样管理员换默认模型不需要改文件、不需要重启服务（改完下一次请求即生效）。
+-- 单行表（id 恒为 1）：默认模型是全局唯一配置，不按用户分。
+CREATE TABLE IF NOT EXISTS system_llm_config (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    base_url    TEXT NOT NULL DEFAULT '',
+    model       TEXT NOT NULL DEFAULT '',
+    api_key_enc TEXT NOT NULL DEFAULT '',
+    key_hint    TEXT NOT NULL DEFAULT '',
+    updated_by  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- ============ 第五阶段：公开部署的大模型每日额度 ============
 -- 只记「次数」，不记问题内容，不关联任何个人信息（subject 是随机 user_id 或固定 'all'）。
 -- 按天分区（day = 本地日期字符串），跨天自然归零，无需定时任务清理。

@@ -41,7 +41,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,6 +116,22 @@ class NoticeIngestRequest(BaseModel):
 class UserCreateRequest(BaseModel):
     username: str = Field(..., description="用户名")
     role: str = Field("student", description="student | teacher | admin")
+
+
+class BulkUserItem(BaseModel):
+    username: str = Field(..., description="用户名")
+    role: str = Field("student", description="student | teacher | admin")
+
+
+class BulkUsersRequest(BaseModel):
+    """管理员批量注入名单。
+
+    逐条处理、返回三分明细（created / skipped / failed），
+    dry_run=true 只做校验与去重、不写库，用于导入前预览。
+    """
+
+    users: List[BulkUserItem] = Field(..., description="名单条目")
+    dry_run: bool = Field(False, description="只预览不写库")
 
 
 class LLMConfigRequest(BaseModel):
@@ -547,6 +563,35 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         # 首个用户免鉴权（bootstrap），此后仅 admin 可创建 —— 规则在服务层判定
         return users_mod.create_user(db, req.username, req.role, actor=user)
 
+    @app.post("/api/v1/users/bulk")
+    def create_users_bulk(
+        req: BulkUsersRequest,
+        request: Request,
+        user: dict = Depends(deps.require_admin),
+        db: Database = Depends(deps.get_db),
+    ):
+        """管理员批量注入名单（老师 / 管理员 / 学生）。
+
+        逐条处理而不是整批原子提交：一行格式错误不该让其余 99 人进不来。
+        返回 created / skipped / failed 三分明细，管理员按明细修正后重跑即可（幂等）。
+        """
+        result = users_mod.create_users_bulk(
+            db,
+            [{"username": item.username, "role": item.role} for item in req.users],
+            actor=user,
+            dry_run=req.dry_run,
+        )
+        log_event(
+            logger, "users_bulk_import", request_id=request.state.request_id,
+            actor=user["user_id"], dry_run=req.dry_run,
+            # 不要把 summary 直接 ** 展开：created 与 LogRecord 内置属性同名，
+            # logging 会抛 KeyError（现在 log_event 也做了兜底，但不该靠它）
+            n_created=result["summary"]["created"],
+            n_skipped=result["summary"]["skipped"],
+            n_failed=result["summary"]["failed"],
+        )
+        return result
+
     @app.get("/api/v1/users")
     def list_users(
         user: dict = Depends(deps.require_admin),
@@ -581,6 +626,65 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "如需使用自己的模型，请把项目部署到你自己的机器上（SCHOOL_DEPLOY_MODE=selfhost）。",
                 detail="byok_disabled",
             )
+
+    @app.get("/api/v1/llm/default")
+    def get_default_llm(
+        user: dict = Depends(deps.require_admin),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
+        box: SecretBox = Depends(deps.get_secret_box),
+    ):
+        """管理员查看「所有人没选模型时用哪个」。只回掩码，不回明文 key。"""
+        return llm_cfg_mod.system_public_view(
+            settings, llm_cfg_mod.load_system_config(db, box)
+        )
+
+    @app.put("/api/v1/llm/default")
+    def put_default_llm(
+        req: LLMConfigRequest,
+        request: Request,
+        user: dict = Depends(deps.require_admin),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
+        box: SecretBox = Depends(deps.get_secret_box),
+    ):
+        """设置系统默认模型。
+
+        与用户 BYOK 的区别：这张表是全局唯一的「运营方配置」，改完下一次请求即生效，
+        不需要改 .env、不需要重启——换模型属于运营动作，不该要求停机。
+        """
+        cfg = llm_cfg_mod.save_system_config(
+            db, box, settings,
+            api_key=req.api_key, base_url=req.base_url, model=req.model,
+            actor_id=user["user_id"],
+        )
+        log_event(
+            logger, "system_llm_saved", request_id=request.state.request_id,
+            actor=user["user_id"], base_url=cfg.base_url, model=cfg.model,
+            key_hint=cfg.hint,
+        )
+        return llm_cfg_mod.system_public_view(settings, cfg)
+
+    @app.delete("/api/v1/llm/default")
+    def delete_default_llm(
+        request: Request,
+        user: dict = Depends(deps.require_admin),
+        db: Database = Depends(deps.get_db),
+        settings: Settings = Depends(deps.get_app_settings),
+        box: SecretBox = Depends(deps.get_secret_box),
+    ):
+        """清除数据库里的默认模型，落回 .env（不是把系统变成不可用）。"""
+        removed = llm_cfg_mod.delete_system_config(db)
+        log_event(
+            logger, "system_llm_deleted", request_id=request.state.request_id,
+            actor=user["user_id"], removed=removed,
+        )
+        return {
+            "deleted": removed,
+            **llm_cfg_mod.system_public_view(
+                settings, llm_cfg_mod.load_system_config(db, box)
+            ),
+        }
 
     @app.get("/api/v1/llm/config")
     def get_llm_config(

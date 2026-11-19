@@ -58,9 +58,42 @@
       </div>
 
       <div class="card">
-        <h3 style="margin-top:0">④ 用户与权限</h3>
-        <div class="muted" style="margin-bottom:10px">仅管理员可见。会话、掌握标记、答题记录均按用户隔离。</div>
-        <button class="btn btn-ghost" id="usr-load">加载用户列表</button>
+        <h3 style="margin-top:0">④ 用户与名单</h3>
+        <div class="muted" style="margin-bottom:12px">
+          学生可自助注册；<b>老师与管理员只能由这里导入</b>，不开放自助创建。
+          导入后生成的 Token 只显示一次，请当场分发给本人。
+        </div>
+
+        <div class="form-grid">
+          <label>用户名<input id="nu-name" placeholder="如 zhanglaoshi" /></label>
+          <label>角色
+            <select id="nu-role">
+              <option value="teacher">老师（+ 维护端）</option>
+              <option value="admin">管理员（+ 用户管理）</option>
+              <option value="student">学生</option>
+            </select>
+          </label>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="btn" id="nu-create">添加单个</button>
+          <span class="muted" id="nu-msg"></span>
+        </div>
+
+        <div style="margin-top:18px;padding-top:14px;border-top:1px dashed var(--line)">
+          <div class="muted" style="margin-bottom:8px">
+            批量导入：每行一条 <code>用户名,角色</code>，角色可省略（默认 student），也接受「学生 / 老师 / 管理员」。
+          </div>
+          <textarea id="bu-text" style="width:100%;min-height:110px" placeholder="zhangsan,student&#10;lisi,teacher&#10;wangwu,admin"></textarea>
+          <div style="margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <input type="file" id="bu-file" accept=".csv,.txt" style="max-width:220px" />
+            <button class="btn btn-ghost" id="bu-preview">预览</button>
+            <button class="btn" id="bu-import">确认导入</button>
+            <span class="muted" id="bu-status"></span>
+          </div>
+          <div id="bu-result" style="margin-top:12px"></div>
+        </div>
+
+        <button class="btn btn-ghost" id="usr-load" style="margin-top:16px">加载用户列表</button>
         <div id="usr-list" style="margin-top:12px"></div>
       </div>`;
   }
@@ -79,6 +112,89 @@
         : '<div class="muted">暂无用户</div>';
     } catch (e) {
       box.innerHTML = `<div class="error-text">${escapeHtml(e.message)}${e.hint ? '<br/>' + escapeHtml(e.hint) : ''}</div>`;
+    }
+  }
+
+  // ---------- 用户名单（仅管理员） ----------
+  // 只要管理员能进这张卡片，说明身份已是 admin；后端仍会再校验一次，
+  // 前端这层只是为了不把按钮摆给不该看的人。
+  const ROLE_ALIAS = {
+    student: 'student', teacher: 'teacher', admin: 'admin',
+    学生: 'student', 老师: 'teacher', 教师: 'teacher', 管理员: 'admin',
+  };
+
+  function parseRoster(text) {
+    const out = [];
+    (text || '').split(/\r?\n/).forEach((line) => {
+      const raw = line.trim();
+      if (!raw || raw.startsWith('#')) return;
+      const parts = raw.split(/[,，\t]/).map((s) => s.trim()).filter(Boolean);
+      if (!parts.length) return;
+      const role = ROLE_ALIAS[parts[1]] || ROLE_ALIAS[(parts[1] || '').toLowerCase()] || 'student';
+      out.push({ username: parts[0], role });
+    });
+    return out;
+  }
+
+  function rosterResult(r) {
+    const box = document.getElementById('bu-result');
+    if (!box) return;
+    const s = r.summary;
+    let html = `<div class="muted">共 ${r.total} 条：成功 <b>${s.created}</b>，跳过 ${s.skipped}，失败 ${s.failed}${r.dry_run ? '（预览，未写库）' : ''}</div>`;
+    if (r.created.length) {
+      html += '<div style="margin-top:10px"><b>已创建</b>' + r.created.map((c) => `
+        <div class="kv"><span class="k">${escapeHtml(c.username)} <span class="badge">${escapeHtml(c.role)}</span></span>
+        <span class="muted" style="font-size:12px;font-family:Consolas,monospace">${escapeHtml(c.api_token || '（预览）')}</span></div>`).join('') + '</div>';
+    }
+    if (r.skipped.length) {
+      html += '<div style="margin-top:10px"><b>已跳过</b>' + r.skipped.map((c) => `
+        <div class="kv"><span class="k">第 ${c.line} 行 ${escapeHtml(c.username || '—')}</span>
+        <span class="muted">${escapeHtml(c.reason)}</span></div>`).join('') + '</div>';
+    }
+    if (r.failed.length) {
+      html += '<div style="margin-top:10px"><b>失败</b>' + r.failed.map((c) => `
+        <div class="kv"><span class="k">第 ${c.line} 行 ${escapeHtml(c.username || '—')}</span>
+        <span class="error-text">${escapeHtml(c.reason)}</span></div>`).join('') + '</div>';
+    }
+    box.innerHTML = html;
+  }
+
+  async function submitRoster(dryRun) {
+    const status = document.getElementById('bu-status');
+    const list = parseRoster((document.getElementById('bu-text') || {}).value || '');
+    if (!list.length) {
+      if (status) status.textContent = '名单为空：每行写「用户名,角色」';
+      return;
+    }
+    if (status) status.textContent = dryRun ? '预览中…' : '导入中…';
+    try {
+      const r = await API.bulkCreateUsers(list, dryRun);
+      rosterResult(r);
+      if (status) status.textContent = dryRun ? '预览完成，确认无误后点「确认导入」' : '导入完成，Token 请立即分发';
+      if (!dryRun) loadUsers();
+    } catch (e) {
+      if (status) status.textContent = '';
+      const box = document.getElementById('bu-result');
+      if (box) {
+        box.innerHTML = `<div class="error-text">${escapeHtml(e.message)}${e.hint ? '<br/>' + escapeHtml(e.hint) : ''}</div>`;
+      }
+    }
+  }
+
+  async function createOne() {
+    const msg = document.getElementById('nu-msg');
+    const name = ((document.getElementById('nu-name') || {}).value || '').trim();
+    const role = (document.getElementById('nu-role') || {}).value || 'student';
+    if (!name) { if (msg) msg.textContent = '请填写用户名'; return; }
+    if (msg) msg.textContent = '创建中…';
+    try {
+      const r = await API.createUser(name, role);
+      if (msg) msg.textContent = `已创建 ${r.username}（${r.role}），Token：${r.api_token}`;
+      const el = document.getElementById('nu-name');
+      if (el) el.value = '';
+      loadUsers();
+    } catch (e) {
+      if (msg) msg.textContent = '失败：' + e.message;
     }
   }
 
@@ -264,6 +380,27 @@
     else if (e.target.id === 'ev-run') runEval();
     else if (e.target.id === 'ev-latest') loadLatest();
     else if (e.target.id === 'usr-load') loadUsers();
+    else if (e.target.id === 'nu-create') createOne();
+    else if (e.target.id === 'bu-preview') submitRoster(true);
+    else if (e.target.id === 'bu-import') submitRoster(false);
+  });
+
+  // 名单文件读取：CSV / TXT 直接用 text()，导入仍走同一条文本解析路径，
+  // 这样「文件」与「粘贴」两种方式的行为完全一致，不会出现两套解析规则。
+  view.addEventListener('change', async (e) => {
+    if (e.target.id !== 'bu-file') return;
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      const ta = document.getElementById('bu-text');
+      if (ta) ta.value = text;
+      const status = document.getElementById('bu-status');
+      if (status) status.textContent = `已读取 ${f.name}，请先预览`;
+    } catch (err) {
+      const status = document.getElementById('bu-status');
+      if (status) status.textContent = '读取文件失败：' + err.message;
+    }
   });
 
   window.addEventListener('view:changed', (e) => { if (e.detail === 'admin') load(); });

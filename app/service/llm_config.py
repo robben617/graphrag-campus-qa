@@ -51,6 +51,8 @@ class UserLLMConfig:
     hint: str
     enabled: bool
     updated_at: str = ""
+    # 仅系统默认模型使用：记录最后一次是谁改的，便于追责与排查
+    updated_by: str = ""
 
     def to_client(self, settings: Settings) -> LLMClient:
         return LLMClient(
@@ -195,6 +197,117 @@ def delete_config(db: Database, user_id: str) -> bool:
         return cur.rowcount > 0
 
 
+# ---------- 系统默认模型（管理员维护，全局唯一） ----------
+# 与 user_llm_configs 的区别：那张表是「某个人自己的模型」，这张是「所有人没选模型时用哪个」。
+# 存库而不是只读 .env，是因为管理员改默认模型属于运营动作，不该要求改文件 + 重启。
+
+SYSTEM_USER_ID = "__system__"
+
+
+def load_system_config(db: Database, box: SecretBox) -> Optional[UserLLMConfig]:
+    with db.session() as conn:
+        row = conn.execute(
+            "SELECT base_url, model, api_key_enc, key_hint, updated_by, updated_at "
+            "FROM system_llm_config WHERE id = 1"
+        ).fetchone()
+    if not row:
+        return None
+    plain = box.decrypt(row["api_key_enc"])
+    return UserLLMConfig(
+        user_id=SYSTEM_USER_ID,
+        base_url=row["base_url"],
+        model=row["model"],
+        api_key=plain,
+        hint=row["key_hint"],
+        enabled=bool(plain),
+        updated_at=row["updated_at"],
+        updated_by=row["updated_by"],
+    )
+
+
+def save_system_config(
+    db: Database,
+    box: SecretBox,
+    settings: Settings,
+    *,
+    api_key: str = "",
+    base_url: str = "",
+    model: str = "",
+    actor_id: str = "",
+) -> UserLLMConfig:
+    """保存系统默认模型。api_key 留空表示沿用已存的那把，便于只改模型名。"""
+    existing = load_system_config(db, box)
+
+    if api_key.strip():
+        plain_key = validate_api_key(api_key)
+        encrypted = box.encrypt(plain_key)
+        hint = key_hint(plain_key)
+    elif existing and existing.api_key:
+        plain_key = existing.api_key
+        encrypted = box.encrypt(plain_key)
+        hint = existing.hint
+    else:
+        # 允许只改模型名（例如从 deepseek-chat 换成 deepseek-reasoner），
+        # 此时 base_url / key 仍取自 .env，由 LLMClient 的默认分支兜底。
+        plain_key = ""
+        encrypted = ""
+        hint = ""
+
+    norm_url = (
+        normalize_base_url(base_url, allow_private=settings.allow_private_llm_base_url)
+        if base_url.strip()
+        else (existing.base_url if existing else "")
+    )
+    norm_model = (model or "").strip() or (existing.model if existing else "")
+    if len(norm_model) > 64 or " " in norm_model:
+        raise UserInputError("模型名称不合法（不能包含空格，长度不超过 64）")
+
+    with db.session() as conn:
+        conn.execute(
+            """
+            INSERT INTO system_llm_config (id, base_url, model, api_key_enc, key_hint, updated_by, updated_at)
+            VALUES (1,?,?,?,?,?, datetime('now','localtime'))
+            ON CONFLICT(id) DO UPDATE SET
+                base_url = excluded.base_url,
+                model = excluded.model,
+                api_key_enc = excluded.api_key_enc,
+                key_hint = excluded.key_hint,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+            """,
+            (norm_url, norm_model, encrypted, hint, actor_id),
+        )
+    return UserLLMConfig(
+        user_id=SYSTEM_USER_ID,
+        base_url=norm_url,
+        model=norm_model,
+        api_key=plain_key,
+        hint=hint,
+        enabled=bool(plain_key),
+        updated_by=actor_id,
+    )
+
+
+def delete_system_config(db: Database) -> bool:
+    with db.session() as conn:
+        cur = conn.execute("DELETE FROM system_llm_config WHERE id = 1")
+        return cur.rowcount > 0
+
+
+def system_public_view(settings: Settings, cfg: Optional[UserLLMConfig]) -> dict:
+    """管理端的默认模型视图：同样只回掩码，不回明文。"""
+    return {
+        "configured": bool(cfg and cfg.api_key),
+        "base_url": (cfg.base_url if cfg else "") or settings.llm_base_url,
+        "model": (cfg.model if cfg else "") or settings.llm_model,
+        "key_hint": cfg.hint if cfg else "",
+        "updated_by": cfg.updated_by if cfg else "",
+        "updated_at": cfg.updated_at if cfg else "",
+        # 表里没配时真正生效的是 .env，前端据此提示「当前来自 .env」
+        "source": "db" if (cfg and cfg.api_key) else ("env" if settings.llm_configured else "none"),
+    }
+
+
 def build_transient_config(
     settings: Settings, *, api_key: str, base_url: str = "", model: str = ""
 ) -> UserLLMConfig:
@@ -239,7 +352,9 @@ def public_view(
         "configured": has_user,
         "enabled": bool(cfg.enabled) if cfg else False,
         "base_url": cfg.base_url if cfg else "",
-        "model": cfg.model if cfg else "",
+        # 没配个人模型时回填服务端默认模型名：前端要显示「当前用的是哪个模型」，
+        # 否则模型选择器只能显示一个没有信息量的「默认模型」。这不是密钥，可以公开。
+        "model": (cfg.model if cfg else "") or settings.llm_model,
         "key_hint": cfg.hint if cfg else "",
         "updated_at": cfg.updated_at if cfg else "",
         "source": source,

@@ -84,7 +84,7 @@
 | Recall@5 | **0.8909**（最近一次，2026-09-16）；历史最好 0.9000（2026-09-08） | `evaluation_runs` 表 |
 | 事实一致性（近似） | 0.6894 | 同上 |
 | 引用覆盖率 | 1.0 | 同上 |
-| 自动化测试 | 95 项（94 通过 + 1 跳过） | `pytest --collect-only -q` |
+| 自动化测试 | 118 项（117 通过 + 1 跳过） | `pytest --collect-only -q` |
 | 后端代码 | 5,976 行 Python（37 个文件） | `wc -l app/**/*.py` |
 | 前端代码 | 2,038 行（10 个 JS + 1 HTML + 1 CSS，无构建） | `wc -l frontend/` |
 | 测试代码 | 1,577 行 | `wc -l tests/` |
@@ -174,11 +174,14 @@ docker compose up -d --build
 | 7 | 时效过滤与版本冲突提示 | 自动生效 | `versioning.active_doc_ids` / `check_conflict` | 可用 |
 | 8 | 增量入库（教师上传通知） | 维护端 | `POST /ingest/notice` | 可用 |
 | 9 | 质量评测（Recall@K 等） | 维护端 | `POST /evaluation/run` | 可用 |
-| 10 | 多用户与角色权限 | 身份面板 | `/users`、`X-User-Token` | 可用 |
-| 11 | 用户自带大模型密钥（BYOK） | 模型设置（仅 selfhost 显示） | `/llm/config` 4 个接口 | 可用，默认关闭入口 |
-| 12 | 公开部署每日额度 | 自动生效 | `llm_quota.consume` | 可用 |
-| 13 | Dify 外部知识库适配 | 无 UI | `POST /dify/retrieval`（配置 KEY 才注册） | 可用 |
-| 14 | 备份 / 恢复 | CLI | `python -m app.backup backup|restore` | 可用 |
+| 10 | 多用户与角色权限 | 身份面板（右上角） | `/users`、`X-User-Token` | 可用 |
+| 11 | 身份分档：学生自助 / 老师与管理员的名单注入 | 维护端「用户与名单」 | `POST /users/bulk` | 可用 |
+| 12 | 用户自带大模型密钥（BYOK，旧路径） | 模型设置（仅 selfhost 显示） | `/llm/config` 4 个接口 | 可用，不再是主路径 |
+| 13 | 聊天窗口模型选择（服务端默认 / 自定义模型） | 输入框下方 | `X-LLM-*` 请求头，密钥存浏览器 | 可用 |
+| 14 | 管理员默认模型（改完即时生效） | 身份面板内隐藏入口 | `/llm/default` 3 个接口 | 可用 |
+| 15 | 公开部署每日额度 | 自动生效 | `llm_quota.consume` | 可用 |
+| 16 | Dify 外部知识库适配 | 无 UI | `POST /dify/retrieval`（配置 KEY 才注册） | 可用 |
+| 17 | 备份 / 恢复 | CLI | `python -m app.backup backup|restore` | 可用 |
 
 ### 2.5 明确不做的事（避免被当成缺陷）
 
@@ -197,7 +200,7 @@ docker compose up -d --build
 ```
 ┌────────────────────────────────────────────────────────────┐
 │ Web 层    app/web/                                          │
-│   server.py（36 个路由） deps.py（依赖注入） dify.py（适配）  │
+│   server.py（40 个路由） deps.py（依赖注入） dify.py（适配）  │
 ├────────────────────────────────────────────────────────────┤
 │ 服务层    app/service/                                       │
 │   qa / conversation / llm / llm_config / llm_quota          │
@@ -686,7 +689,7 @@ Content-Type: application/json
 
 会话内追问 `POST /api/v1/sessions/{id}/ask` 响应额外含 `rewritten_question`（发生改写时非 null）。
 
-### 8.3 全量路由表（36 个 + 1 个可选）
+### 8.3 全量路由表（40 个 + 1 个可选）
 
 | # | 方法 | 路径 | 权限 | 入参 | 说明 |
 |---|---|---|---|---|---|
@@ -714,29 +717,41 @@ Content-Type: application/json
 | 22 | DELETE | `/api/v1/mastery` | 任意 | `item_id`(必填) | 取消标记 |
 | 23 | GET | `/api/v1/search/compare` | 任意 | `q`(必填), `top_k`(5) | 三路检索对比 |
 | 24 | GET | `/api/v1/versioning` | 任意 | — | 时效全景 |
-| 25 | POST | `/api/v1/users` | 首个用户免鉴权，此后 admin | `{username, role}` | 创建用户，返回 `api_token` |
-| 26 | GET | `/api/v1/users` | 任意 | — | 用户列表 |
-| 27 | GET | `/api/v1/me` | 任意 | — | 当前身份 |
-| 28 | GET | `/api/v1/llm/config` | 任意 | — | 配置视图（含策略字段） |
-| 29 | PUT | `/api/v1/llm/config` | 已登录 + selfhost | `{api_key?,base_url?,model?,enabled?}` | 保存配置 |
-| 30 | DELETE | `/api/v1/llm/config` | 已登录 + selfhost | — | 删除配置（幂等） |
-| 31 | POST | `/api/v1/llm/config/test` | 已登录 + selfhost | 同上（可带临时 Key） | 连通性测试 |
-| 32 | POST | `/api/v1/ingest/notice` | teacher/admin | 通知全文 + 元数据 | 增量入库 |
-| 33 | POST | `/api/v1/evaluation/run` | teacher/admin | `top_k`(5) | 跑评测 |
-| 34 | GET | `/api/v1/evaluation/latest` | teacher/admin | — | 最近一次评测 |
-| 35 | GET | `/api/v1/health` | 任意 | — | 健康检查（含形态与模型状态） |
-| 36 | GET | `/api/v1/stats` | 任意 | — | 数据规模 + 覆盖度 |
-| 37 | POST | `/dify/retrieval` | Bearer = `DIFY_RETRIEVAL_API_KEY` | Dify 协议 | **仅配置 KEY 时注册** |
+| 25 | POST | `/api/v1/users` | 首个用户免鉴权；此后仅 admin 可建非学生 | `{username, role}` | 创建用户，返回 `api_token` |
+| 26 | POST | `/api/v1/users/bulk` | admin | `{users:[{username,role}], dry_run}` | 名单批量注入，返回三分明细 |
+| 27 | GET | `/api/v1/users` | admin | — | 用户列表 |
+| 28 | GET | `/api/v1/me` | 任意 | — | 当前身份 |
+| 29 | GET | `/api/v1/llm/config` | 任意 | — | 配置视图（含策略字段与默认模型名） |
+| 30 | PUT | `/api/v1/llm/config` | 已登录 + selfhost | `{api_key?,base_url?,model?,enabled?}` | 保存配置（BYOK 旧路径） |
+| 31 | DELETE | `/api/v1/llm/config` | 已登录 + selfhost | — | 删除配置（幂等） |
+| 32 | POST | `/api/v1/llm/config/test` | 已登录 + selfhost | 同上（可带临时 Key） | 连通性测试 |
+| 33 | GET | `/api/v1/llm/default` | admin | — | 系统默认模型（掩码） |
+| 34 | PUT | `/api/v1/llm/default` | admin | `{api_key?,base_url?,model?}` | 设置默认模型，即时生效 |
+| 35 | DELETE | `/api/v1/llm/default` | admin | — | 清除默认模型，退回 `.env` |
+| 36 | POST | `/api/v1/ingest/notice` | teacher/admin | 通知全文 + 元数据 | 增量入库 |
+| 37 | POST | `/api/v1/evaluation/run` | teacher/admin | `top_k`(5) | 跑评测 |
+| 38 | GET | `/api/v1/evaluation/latest` | teacher/admin | — | 最近一次评测 |
+| 39 | GET | `/api/v1/health` | 任意 | — | 健康检查（含形态与模型状态） |
+| 40 | GET | `/api/v1/stats` | 任意 | — | 数据规模 + 覆盖度 |
+| 41 | POST | `/dify/retrieval` | Bearer = `DIFY_RETRIEVAL_API_KEY` | Dify 协议 | **仅配置 KEY 时注册** |
+
+> 另有 `POST /api/v1/ask`、`/sessions/*` 等问答路由：不属于「用户可见的入口」分类，
+> 但同样受身份与额度策略约束。`X-LLM-Key` / `X-LLM-Base-Url` / `X-LLM-Model`
+> 是请求级凭据头，仅在 selfhost 形态生效，服务端不落库。
 
 ### 8.4 权限矩阵
 
 | 操作 | 匿名 | student | teacher | admin |
 |---|---|---|---|---|
 | 问答 / 会话 / 图谱 / 自测 / 掌握 | 是（匿名数据独立） | 是 | 是 | 是 |
-| 创建用户 | 仅当系统内 0 用户 | 否 | 否 | 是 |
+| 创建**学生**身份 | 是（系统内 0 用户时可建任意角色） | 是 | 是 | 是 |
+| 创建**老师 / 管理员**身份 | 仅当系统内 0 用户 | 否 | 否 | 是 |
+| 导入名单 `POST /users/bulk` | 否 | 否 | 否 | 是 |
 | 增量入库 | 否 | 否 | 是 | 是 |
 | 跑评测 / 看评测 | 否 | 否 | 是 | 是 |
 | 保存 BYOK 配置 | 否（403 `anonymous`） | selfhost 下是 | 是 | 是 |
+| 设置系统默认模型 `/llm/default` | 否 | 否 | 否 | 是 |
+| 用自定义模型提问（请求头） | 否（无入口） | selfhost 下是 | 是 | 是 |
 
 > **口径提醒**：权限不足统一是 **403**（`ForbiddenError`），不是 400。这一点在 `tests/test_api_phase3.py` 有断言固化。
 
@@ -1100,16 +1115,18 @@ python scripts/frontend_server.py --port 5599
 | 编号 | 严重度 | 问题 | 证据 | 建议 |
 |---|---|---|---|---|
 | **D-01** | **高** | FAQ 匹配分母只取 FAQ 侧，短问题误命中长 FAQ | 见下方实测 | 改 Jaccard：`|Q∩F| / |Q∪F|`，阈值提到 0.6 并加「问题长度差」约束 |
-| D-02 | 中 | `ci.yml` 注释仍写「完整 67 项」，实际 95 项 | `.github/workflows/ci.yml:9` | 改注释；顺手把「6 个用例」的说明对齐 |
+| D-02 | 低 | ~~`ci.yml` 注释写「完整 67 项」~~ **已修复**：注释已改为不含测试数，避免每次加用例都要改注释 | `.github/workflows/ci.yml` 已无该文案 | 无需处理 |
 | D-03 | 中 | 6 个校方文件仍在仓库（`data/raw/notices/*.docx|.txt`） | `git ls-files data/` 可见 | 若彻底合规，应连同 manifest 一起处理，不能只删文件（会触发 D-04） |
 | D-04 | 中 | 干净克隆无法 `import`（缺 2 个 PDF，导入硬报错） | manifest 8 条，仓库只有 6 个文件 | 在 README「数据准备」里给逐文件清单；或提供 `--allow-missing` 开发开关 |
 | D-05 | 中 | 无删除用户接口，`user_llm_configs` 未做级联清理 | 无 `DELETE /users`；`user_llm_configs` 无外键 | 加 `DELETE /users/{id}`（admin）并在事务内清配置/会话/掌握 |
 | D-06 | 中 | `ALLOW_SERVER_LLM_FALLBACK` 默认 `true` | `config.py:142-144` | 公网部署前必须显式设 `false`，否则等于开放运营方额度（虽有限额兜底） |
-| D-07 | 低 | LLM 生成失败不区分原因，统一降级为摘编 | `qa.py:255-261` 裸 `except` | 区分「鉴权失败/限流/超时」，鉴权失败应提示用户检查 Key 而不是静默降级 |
+| D-07 | 低 | LLM 生成失败不区分原因，统一降级为摘编 | `qa.py` 裸 `except` | 区分「鉴权失败/限流/超时」，鉴权失败应提示用户检查 Key 而不是静默降级 |
 | D-08 | 低 | 额度计数多进程下 best-effort | `llm_quota.py:14-16` 注释已声明 | 单进程部署无影响；多 worker 时改用 Redis 或 SQLite 事务级锁 |
 | D-09 | 低 | `factuality` 命名误导 | `evaluation.py:5-7` | 改名或补文档说明是关键词覆盖率 |
-| D-10 | 低 | 前端零自动化测试 | 见 §12.1 | 补 Playwright 三条主路径 |
-| D-11 | 低 | 未推送：本地领先 `origin/main` 1 个提交 | `git status -sb` → `ahead 1` | 需要用户确认后再推（含 tag） |
+| D-10 | 低 | 前端零自动化测试 | 见 §12.1 | 补 Playwright 三条主路径（本次改动靠 CDP 手工脚本验证，仍未入库） |
+| D-11 | 低 | ~~未推送：本地领先 `origin/main`~~ **已解决**（v0.5.0 起已推送） | `git status -sb` 无 ahead | 无需处理 |
+| D-12 | 低 | 自定义模型密钥存 `localStorage`，同源 XSS 可读取 | `chat.js` 的 `llm_models_<uid>` | 前端不引入第三方脚本；部署时加 `Content-Security-Policy`；高风险场景改用服务端加密落库（BYOK 旧路径仍在） |
+| D-13 | 低 | 名单导入逐条建号，上百人时写入较慢 | `users.create_users_bulk` 逐条 `create_user` | 单事务批量插入；当前校内规模（数百人）可接受 |
 
 ### D-01 实测证据（本次复现）
 
@@ -1155,7 +1172,7 @@ Q: 奖学金申请需要什么条件？
 3. **不要为了跑通测试去删 manifest 条目**。会导致悬空关系硬报错（`importer.py` 对引用不到的文档判失败），CI 会红。
 4. **不要用 `cp -r` 模拟干净克隆**。会把被 gitignore 的 `data/school_kb.db` 带进去，掩盖「缺语料就跑不起来」的事实。必须 `git clone --no-hardlinks -c core.autocrlf=false`。
 5. **权限不足保持 403**，不要改回 400。`tests/test_api_phase3.py` 有断言，前端也只凭状态码跳转。
-6. **不要在文档里把测试数/规模写成旧值**。当前基线：95 项测试、8 文档、827 条款、82 实体、81 关系、Recall@5 0.8909。改完代码若数字变了，`README.md`、`CHANGELOG.md`、`docs/README.md` 三处必须同步。
+6. **不要在文档里把测试数/规模写成旧值**。当前基线：118 项测试、8 文档、827 条款、82 实体、81 关系、Recall@5 0.8909。改完代码若数字变了，`README.md`、`CHANGELOG.md`、`docs/README.md` 三处必须同步。
 7. **不要给"公开站点"加回 BYOK 表单**。`byok_allowed=false` 是产品决策不是遗漏。
 8. **不要移除 `fail-closed`**。额度统计异常时放行 = 账单失控。
 9. **不要在日志里打明文 Key**。只允许 `key_hint`。

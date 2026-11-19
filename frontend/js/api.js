@@ -82,7 +82,7 @@
 
   async function request(method, path, body, opts) {
     const b = await ensureBase();
-    const o = { method, headers: {} };
+    const o = { method, headers: Object.assign({}, (opts && opts.headers) || {}) };
     const token = getToken();
     if (token) o.headers['X-User-Token'] = token;
     if (body !== undefined) {
@@ -130,29 +130,50 @@
     deployPromise = null;
   }
 
+  // 聊天窗口「自定义模型」：密钥只存在浏览器，随请求头一次性带给后端转发。
+  // 不落库、不进 URL、不进日志——后端只把它用于本次调用。
+  function llmHeaders(cfg) {
+    if (!cfg || !cfg.api_key) return {};
+    return {
+      'X-LLM-Key': cfg.api_key,
+      'X-LLM-Base-Url': cfg.base_url || '',
+      'X-LLM-Model': cfg.model || '',
+    };
+  }
+
   window.API = {
     get BASE() { return base; },
     // 身份
     getToken, setToken, clearToken,
     me: () => request('GET', '/api/v1/me'),
     createUser: (username, role) => request('POST', '/api/v1/users', { username, role }),
+    bulkCreateUsers: (users, dryRun) =>
+      request('POST', '/api/v1/users/bulk', { users, dry_run: !!dryRun }),
     listUsers: () => request('GET', '/api/v1/users'),
-    // 部署策略 / 大模型密钥（用户自带 Key，仅自部署形态开放写入）
+    // 部署策略 / 大模型（BYOK 旧路径 + 管理员默认模型）
     deployInfo, resetDeployInfo,
     llmConfig: () => request('GET', '/api/v1/llm/config'),
     saveLLMConfig: (payload) => request('PUT', '/api/v1/llm/config', payload),
     deleteLLMConfig: () => request('DELETE', '/api/v1/llm/config'),
     testLLMConfig: (payload) => request('POST', '/api/v1/llm/config/test', payload || {}),
+    defaultLLM: () => request('GET', '/api/v1/llm/default'),
+    saveDefaultLLM: (payload) => request('PUT', '/api/v1/llm/default', payload),
+    deleteDefaultLLM: () => request('DELETE', '/api/v1/llm/default'),
     // 问答：mode 省略时由服务端按部署形态决定（auto）
-    ask: (question, mode) => request('POST', '/api/v1/ask', mode ? { question, mode } : { question }),
+    ask: (question, mode, llmCfg) =>
+      request('POST', '/api/v1/ask',
+        mode ? { question, mode } : { question },
+        { headers: llmHeaders(llmCfg) }),
     // 会话
     createSession: (title) => request('POST', '/api/v1/sessions', { title }),
     listSessions: () => request('GET', '/api/v1/sessions'),
     getSession: (id) => request('GET', `/api/v1/sessions/${id}`),
     deleteSession: (id) => request('DELETE', `/api/v1/sessions/${id}`),
     sessionMessages: (id) => request('GET', `/api/v1/sessions/${id}/messages`),
-    sessionAsk: (id, question, mode) =>
-      request('POST', `/api/v1/sessions/${id}/ask`, mode ? { question, mode } : { question }),
+    sessionAsk: (id, question, mode, llmCfg) =>
+      request('POST', `/api/v1/sessions/${id}/ask`,
+        mode ? { question, mode } : { question },
+        { headers: llmHeaders(llmCfg) }),
     // 图谱
     graphStats: () => request('GET', '/api/v1/graph/stats'),
     graphCategories: () => request('GET', '/api/v1/graph/categories'),

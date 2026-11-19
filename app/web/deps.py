@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from fastapi import Depends, Request
 
+from typing import Optional
+
 from ..config import Settings
 from ..crypto import SecretBox
 from ..db import Database
@@ -92,13 +94,43 @@ def disabled_llm(settings: Settings) -> LLMClient:
     )
 
 
+def request_llm_config(request: Request, settings: Settings) -> Optional[LLMConfig]:
+    """从请求头读取「本次请求临时使用的模型凭据」。
+
+    为什么用请求头而不是请求体：模型凭据属于传输层元信息，不该混进业务参数里
+    （业务模型多一个字段，所有构造请求的地方都要跟着改）。更重要的是——
+    **服务端不落库**：这三个头只在本次请求的内存里存在，用完即弃。
+
+    仅在 selfhost 形态生效。公开站点（public）不采集任何用户密钥，
+    即使有人手工塞了这几个头也一律忽略，避免「说好不收集，却能收」的口径分裂。
+    """
+    if not settings.byok_allowed:
+        return None
+    api_key = (request.headers.get("X-LLM-Key") or "").strip()
+    if not api_key:
+        return None
+    base_url = (request.headers.get("X-LLM-Base-Url") or "").strip()
+    model = (request.headers.get("X-LLM-Model") or "").strip()
+    cfg = llm_config_mod.build_transient_config(
+        settings, api_key=api_key, base_url=base_url, model=model
+    )
+    return LLMConfig(
+        base_url=cfg.base_url,
+        api_key=cfg.api_key,
+        model=cfg.model,
+        timeout=settings.llm_timeout,
+    )
+
+
 def get_llm_for_user(request: Request, user: dict = Depends(get_current_user)) -> LLMClient:
     """解析本次请求该用哪把大模型密钥。
 
-    优先级：
-    1. 用户自己配置且启用 → 用用户的（费用与额度由用户承担）；
-    2. 允许服务器兜底 → 用服务器默认配置（运营方付费，生产环境应关掉）；
-    3. 都没有 → 返回一个不可用的客户端，QA 层自动降级为原文摘编。
+    优先级（前者优先）：
+    1. 请求头里的临时凭据 —— 聊天窗口「自定义模型」，密钥只在浏览器，服务端不存；
+    2. 用户存在库里的个人配置 —— BYOK 旧路径，自部署者仍可用；
+    3. 管理员在库里设置的默认模型 —— 改完立即生效，不用重启；
+    4. 服务端 .env 配置（需 allow_server_llm_fallback=true）；
+    5. 都没有 → 不可用客户端，QA 层自动降级为原文摘编。
 
     这里不做缓存：SQLite 单行读取 + Fernet 解密都在微秒级，
     而缓存会引入"用户改了 key 却还在用旧 key"的一致性问题，不划算。
@@ -107,11 +139,38 @@ def get_llm_for_user(request: Request, user: dict = Depends(get_current_user)) -
     db: Database = request.app.state.db
     box: SecretBox = request.app.state.secret_box
 
+    # 1. 请求级临时凭据（仅 selfhost）
+    transient = request_llm_config(request, settings)
+    if transient is not None:
+        return LLMClient(settings, transient)
+
+    # 2. 用户自己的配置
     cfg = llm_config_mod.load_config(db, box, user["user_id"])
     if cfg and cfg.enabled and cfg.api_key:
         return cfg.to_client(settings)
+
+    # 3. 管理员设置的默认模型
+    system_cfg = llm_config_mod.load_system_config(db, box)
+    if system_cfg:
+        if system_cfg.api_key:
+            return system_cfg.to_client(settings)
+        # 只改了模型名 / 地址，key 仍用 .env 的；此时必须尊重 LLM_ENABLED
+        if settings.llm_configured:
+            return LLMClient(
+                settings,
+                LLMConfig(
+                    base_url=system_cfg.base_url or settings.llm_base_url,
+                    api_key=settings.llm_api_key,
+                    model=system_cfg.model or settings.llm_model,
+                    timeout=settings.llm_timeout,
+                ),
+            )
+
+    # 4. 服务端兜底
     if settings.allow_server_llm_fallback:
         return LLMClient(settings)
+
+    # 5. 不可用 → 摘编
     return disabled_llm(settings)
 
 

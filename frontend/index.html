@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>校园知识问答系统</title>
   <!-- 静态资源带版本号，避免浏览器缓存旧文件导致界面异常；改动前端后请递增 v -->
-  <link rel="stylesheet" href="css/style.css?v=10" />
+  <link rel="stylesheet" href="css/style.css?v=11" />
 </head>
 <body>
   <div class="layout">
@@ -23,12 +23,14 @@
         <button class="nav-item" data-view="admin">🛠️ 维护端</button>
         <button class="nav-item" data-view="about">ℹ️ 系统信息</button>
       </nav>
-      <div class="identity" id="identity-box"></div>
-      <div class="identity" id="settings-box"></div>
       <div class="disclaimer">本系统仅为信息查询辅助，请以学校官方发布文件为准。</div>
     </aside>
 
     <main class="main">
+      <!-- 身份入口固定在右上角：它是「我是谁」，与侧栏导航（去哪）职责不同 -->
+      <div class="topbar">
+        <div class="identity" id="identity-box"></div>
+      </div>
       <section id="view-chat" class="view active"></section>
       <section id="view-graph" class="view"></section>
       <section id="view-quiz" class="view"></section>
@@ -38,15 +40,15 @@
       <section id="view-about" class="view"></section>
     </main>
   </div>
-  <script src="js/api.js?v=10"></script>
-  <script src="js/main.js?v=10"></script>
-  <script src="js/chat.js?v=10"></script>
-  <script src="js/graph.js?v=10"></script>
-  <script src="js/quiz.js?v=10"></script>
-  <script src="js/mastery.js?v=10"></script>
-  <script src="js/compare.js?v=10"></script>
-  <script src="js/admin.js?v=10"></script>
-  <script src="js/about.js?v=10"></script>
-  <script src="js/user.js?v=10"></script>
+  <script src="js/api.js?v=11"></script>
+  <script src="js/main.js?v=11"></script>
+  <script src="js/chat.js?v=11"></script>
+  <script src="js/graph.js?v=11"></script>
+  <script src="js/quiz.js?v=11"></script>
+  <script src="js/mastery.js?v=11"></script>
+  <script src="js/compare.js?v=11"></script>
+  <script src="js/admin.js?v=11"></script>
+  <script src="js/about.js?v=11"></script>
+  <script src="js/user.js?v=11"></script>
 </body>
 </html>

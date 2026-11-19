@@ -10,6 +10,16 @@
   let modeKnown = false;
   let lastQuestion = '';
 
+  // 模型选择：自定义模型只存在浏览器本地（localStorage），按身份隔离。
+  // 服务端只在本次请求里转发密钥，不落库——这是「用户觉得安全」的关键：
+  // 用户自己能看见、能删掉，不必相信任何承诺。
+  let deployInfo = null;
+  let currentUid = 'anonymous';
+  let models = [];
+  let activeModelId = 'default';
+  let modelPopOpen = false;
+  let modelFormOpen = false;
+
   function render() {
     view.innerHTML = `
       <h2>💬 智能问答</h2>
@@ -32,12 +42,17 @@
             <textarea id="chat-input" placeholder="输入你的问题，如：奖学金申请需要什么条件？（Ctrl+Enter 发送）"></textarea>
             <button class="btn" id="chat-send">发送</button>
           </div>
-          <div class="chat-input-row" style="align-items:center;justify-content:space-between">
+          <div class="chat-toolbar">
+            <div class="model-wrap">
+              <button class="model-pick" id="model-pick">模型</button>
+              ${modelPopOpen ? modelPop() : ''}
+            </div>
             <span class="muted" id="chat-status"></span>
           </div>
         </div>
       </div>`;
     loadModeInfo();
+    loadModelInfo();
   }
 
   // ---------- 回答方式 ----------
@@ -94,6 +109,194 @@
     }
     const status = document.getElementById('chat-status');
     if (status) status.textContent = '已切到大模型增强，按发送（或 Ctrl+Enter）再问一次';
+  }
+
+  // ---------- 模型选择 ----------
+  // 存在 localStorage，按身份隔离：学生不该看到老师配的模型与额度。
+  function readModels(uid) {
+    try {
+      const raw = localStorage.getItem('llm_models_' + uid);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter((m) => m && m.id && m.model) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writeModels(uid, list) {
+    try {
+      localStorage.setItem('llm_models_' + uid, JSON.stringify(list));
+    } catch (e) { /* 隐私模式下写不进去，本次会话内仍可用 */ }
+  }
+
+  async function loadModelInfo() {
+    let info = null;
+    let me = null;
+    try { info = await API.deployInfo(); } catch (e) { info = null; }
+    try { me = await API.me(); } catch (e) { me = null; }
+    deployInfo = info;
+    currentUid = (me && me.user_id) ? me.user_id : 'anonymous';
+    models = readModels(currentUid);
+    let saved = null;
+    try { saved = localStorage.getItem('llm_active_' + currentUid); } catch (e) { saved = null; }
+    activeModelId = saved && (saved === 'default' || models.some((m) => m.id === saved)) ? saved : 'default';
+    paintModel();
+  }
+
+  function activeModel() {
+    if (activeModelId === 'default') return null;
+    return models.find((m) => m.id === activeModelId) || null;
+  }
+
+  function paintModel() {
+    const btn = document.getElementById('model-pick');
+    if (!btn) return;
+    const cur = activeModel();
+    const label = cur ? (cur.name || cur.model) : ((deployInfo && deployInfo.model) || '默认模型');
+    const usable = !!cur || !!(deployInfo && deployInfo.effective);
+    btn.innerHTML = `<span class="dot ${usable ? '' : 'off'}"></span>${escapeHtml(label)}<span class="caret">▾</span>`;
+    btn.title = cur ? `自定义模型：${cur.model}` : '使用服务端默认模型';
+  }
+
+  function hostOf(url) {
+    try { return new URL(url).host; } catch (e) { return url || ''; }
+  }
+
+  function modelPop() {
+    const byok = !!(deployInfo && deployInfo.byok_allowed);
+    const isAnon = currentUid === 'anonymous';
+    const canCustom = byok && !isAnon;
+    const defaultLabel = (deployInfo && deployInfo.model) || '服务端默认';
+    return `<div class="model-pop">
+      <div class="model-item ${activeModelId === 'default' ? 'active' : ''}" data-model="default">
+        <span>服务端默认模型 <span class="meta">${escapeHtml(defaultLabel)}</span></span>
+      </div>
+      ${models.map((m) => `<div class="model-item ${activeModelId === m.id ? 'active' : ''}" data-model="${escapeHtml(m.id)}">
+          <span>${escapeHtml(m.name || m.model)} <span class="meta">${escapeHtml(hostOf(m.base_url))} · ${escapeHtml(m.model)}</span></span>
+          <button class="del" data-del-model="${escapeHtml(m.id)}" title="删除">✕</button>
+        </div>`).join('')}
+      ${canCustom && !modelFormOpen ? '<button class="btn btn-mini btn-ghost" id="model-add" style="width:100%">＋ 添加自定义模型</button>' : ''}
+      ${modelFormOpen ? modelForm() : ''}
+      ${!byok ? '<div class="model-note">公开演示站点统一使用服务端模型；要用自己的模型请自行部署（SCHOOL_DEPLOY_MODE=selfhost）。</div>' : ''}
+      ${byok && isAnon ? '<div class="model-note">匿名访客没有保存配置的位置，请先在右上角创建身份。</div>' : ''}
+      <div class="model-note">密钥只保存在本浏览器，不写入服务器数据库；换浏览器需重新填写。</div>
+    </div>`;
+  }
+
+  function modelForm() {
+    return `<div class="model-form">
+      <input id="mf-name" placeholder="备注名（可选），如 我的 DeepSeek" />
+      <input id="mf-base" placeholder="Base URL，如 https://api.deepseek.com/v1" />
+      <input id="mf-model" placeholder="模型名，如 deepseek-chat" />
+      <input id="mf-key" type="password" placeholder="API Key（只存本浏览器）" autocomplete="off" />
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-mini btn-ghost" id="mf-test" style="flex:1">测试</button>
+        <button class="btn btn-mini" id="mf-save" style="flex:1">保存</button>
+      </div>
+      <div id="mf-msg" class="muted" style="font-size:12px"></div>
+    </div>`;
+  }
+
+  function rerenderModels() {
+    const wrap = document.querySelector('#view-chat .model-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = `<button class="model-pick" id="model-pick">模型</button>${modelPopOpen ? modelPop() : ''}`;
+    paintModel();
+  }
+
+  function toggleModelPop() {
+    modelPopOpen = !modelPopOpen;
+    if (!modelPopOpen) modelFormOpen = false;
+    rerenderModels();
+  }
+
+  function isModeRowVisible() {
+    const row = document.getElementById('mode-row');
+    return !!row && row.style.display !== 'none';
+  }
+
+  function pickModel(id) {
+    if (id !== 'default' && !models.some((m) => m.id === id)) return;
+    activeModelId = id;
+    try { localStorage.setItem('llm_active_' + currentUid, id); } catch (e) { /* 忽略 */ }
+    // 选了模型却仍走「原文摘编」没有意义：自动切到生成，用户可再手动切回
+    if (id !== 'default' && isModeRowVisible()) setMode('llm');
+    modelPopOpen = false;
+    modelFormOpen = false;
+    rerenderModels();
+    const status = document.getElementById('chat-status');
+    if (status && id !== 'default') {
+      const m = models.find((x) => x.id === id);
+      if (m) status.textContent = `当前模型：${m.name || m.model}`;
+    }
+  }
+
+  function modelDraft() {
+    const get = (id) => ((document.getElementById(id) || {}).value || '').trim();
+    return { name: get('mf-name'), base_url: get('mf-base'), model: get('mf-model'), api_key: get('mf-key') };
+  }
+
+  function validateDraft(d) {
+    if (!d.base_url) return '请填写 Base URL';
+    if (!/^https?:\/\//i.test(d.base_url)) return 'Base URL 必须以 http:// 或 https:// 开头';
+    if (!d.model) return '请填写模型名';
+    // 请求头只能放 ASCII：模型名出现中文时浏览器会直接拒绝发送请求
+    if (/[^\x21-\x7e]/.test(d.model)) return '模型名只能包含英文、数字与常见符号';
+    if (d.api_key.length < 8) return 'API Key 太短，请检查是否复制完整';
+    return '';
+  }
+
+  async function testDraft() {
+    const msg = document.getElementById('mf-msg');
+    const d = modelDraft();
+    const bad = validateDraft(d);
+    if (bad) { if (msg) msg.textContent = bad; return; }
+    if (msg) msg.textContent = '测试中…（会真实调用一次模型）';
+    try {
+      const r = await API.testLLMConfig({ api_key: d.api_key, base_url: d.base_url, model: d.model });
+      if (msg) {
+        msg.textContent = r.ok
+          ? `连接成功：${r.model}，往返 ${r.latency_ms} ms`
+          : `连接失败：${r.message}`;
+      }
+    } catch (e) {
+      if (msg) msg.textContent = '测试失败：' + e.message;
+    }
+  }
+
+  function saveDraft() {
+    const msg = document.getElementById('mf-msg');
+    const d = modelDraft();
+    const bad = validateDraft(d);
+    if (bad) { if (msg) msg.textContent = bad; return; }
+    const item = {
+      id: 'm_' + Date.now().toString(36),
+      name: d.name || d.model,
+      base_url: d.base_url.replace(/\/$/, ''),
+      model: d.model,
+      api_key: d.api_key,
+    };
+    models = models.concat([item]);
+    writeModels(currentUid, models);
+    activeModelId = item.id;
+    try { localStorage.setItem('llm_active_' + currentUid, item.id); } catch (e) { /* 忽略 */ }
+    modelFormOpen = false;
+    modelPopOpen = false;
+    if (isModeRowVisible()) setMode('llm');
+    rerenderModels();
+    const status = document.getElementById('chat-status');
+    if (status) status.textContent = `已切换到「${item.name}」，密钥只保存在本浏览器`;
+  }
+
+  function removeModel(id) {
+    if (!window.confirm('删除这个自定义模型？（只影响本浏览器）')) return;
+    models = models.filter((m) => m.id !== id);
+    writeModels(currentUid, models);
+    if (activeModelId === id) {
+      activeModelId = 'default';
+      try { localStorage.setItem('llm_active_' + currentUid, 'default'); } catch (e) { /* 忽略 */ }
+    }
+    rerenderModels();
   }
 
   function welcome() {
@@ -246,7 +449,7 @@
         const s = await API.createSession();
         sessionId = s.session_id;
       }
-      const resp = await API.sessionAsk(sessionId, q, answerMode);
+      const resp = await API.sessionAsk(sessionId, q, answerMode, activeModel());
       if (resp.rewritten_question) {
         addMessage('assistant', `（理解：${resp.rewritten_question}）`, null);
       }
@@ -263,6 +466,20 @@
 
   // ---------- 事件 ----------
   view.addEventListener('click', (e) => {
+    // 模型区域内的点击不要冒泡到 document：
+    // 浮层是「先重建 DOM 再显示」的，重建后 e.target 已脱离文档，
+    // document 上的「点外部关闭」会把它误判成外部点击，刚打开就关掉。
+    if (e.target.closest && e.target.closest('#view-chat .model-wrap')) {
+      e.stopPropagation();
+    }
+    const modelDel = e.target.closest('[data-del-model]');
+    if (modelDel) { e.stopPropagation(); removeModel(modelDel.dataset.delModel); return; }
+    const modelPick = e.target.closest('.model-pop [data-model]');
+    if (modelPick) { pickModel(modelPick.dataset.model); return; }
+    if (e.target.id === 'model-pick') { toggleModelPop(); return; }
+    if (e.target.id === 'model-add') { modelFormOpen = true; rerenderModels(); return; }
+    if (e.target.id === 'mf-test') { testDraft(); return; }
+    if (e.target.id === 'mf-save') { saveDraft(); return; }
     const del = e.target.closest('[data-del]');
     if (del) { e.stopPropagation(); removeSession(del.dataset.del); return; }
     const item = e.target.closest('.session-item');
@@ -283,7 +500,20 @@
   // 切换用户后，会话归属变了，必须重新拉列表；可用模型也可能变了，重算切换器
   window.addEventListener('identity:changed', () => {
     sessionId = null;
-    if (document.getElementById('session-list')) { welcome(); loadSessions(); loadModeInfo(); }
+    modelPopOpen = false;
+    modelFormOpen = false;
+    if (document.getElementById('session-list')) {
+      welcome(); loadSessions(); loadModeInfo(); loadModelInfo();
+    }
+  });
+
+  // 点模型浮层之外的任何地方 → 收起（浮层在输入区上方，遮挡消息时很容易挡住视线）
+  document.addEventListener('click', (e) => {
+    if (!modelPopOpen) return;
+    if (e.target.closest && e.target.closest('#view-chat .model-wrap')) return;
+    modelPopOpen = false;
+    modelFormOpen = false;
+    rerenderModels();
   });
 
   render();
