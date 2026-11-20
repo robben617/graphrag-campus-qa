@@ -11,7 +11,7 @@
 
 *A GraphRAG-based campus Q&A system over Chinese university policy PDFs — hybrid retrieval (jieba keywords + BGE embeddings, RRF fusion, BGE reranker), an entity-relation graph, citation-grounded answers with structured refusal, and temporal version control (SUPERSEDES). Built with FastAPI + SQLite.*
 
-> 📘 **项目报告 / 交接手册：[`PROJECT_REPORT.md`](PROJECT_REPORT.md)** —— 一页速览、架构与关键决策、36 个路由全表、降级矩阵、成本模型、**缺陷清单 D-01~D-11**、接手红线。无论是人接手还是让智能体继续开发，**都先读这一份**。
+> 📘 **项目报告 / 交接手册：[`PROJECT_REPORT.md`](PROJECT_REPORT.md)** —— 一页速览、架构与关键决策、36 个路由全表、降级矩阵、成本模型、**缺陷清单 D-01~D-13**、接手红线。无论是人接手还是让智能体继续开发，**都先读这一份**。
 >
 > 设计文档：`docs/校园知识问答系统_项目设计文档.md`
 > 第一阶段说明：`docs/第一阶段设计说明.md`
